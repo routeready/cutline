@@ -237,8 +237,10 @@ nav#tabs .pip{position:absolute;top:12px;right:calc(50% - 20px);min-width:9px;he
 /* ══════════ active job bar ══════════ */
 #runbar{position:fixed;left:0;right:0;bottom:calc(70px + env(safe-area-inset-bottom));z-index:21;
   background:var(--orange);border-top:2.5px solid var(--ink);border-bottom:2.5px solid var(--ink);
-  transform:translateY(120%);transition:transform .3s var(--snap)}
-#runbar.on{transform:translateY(0)}
+  transform:translateY(calc(100% + 78px + env(safe-area-inset-bottom)));
+  visibility:hidden;pointer-events:none;
+  transition:transform .3s var(--snap),visibility 0s .3s}
+#runbar.on{transform:translateY(0);visibility:visible;pointer-events:auto;transition:transform .3s var(--snap)}
 #runbar .in{max-width:540px;margin:0 auto;display:flex;align-items:center;gap:var(--s3);padding:var(--s3) var(--s4);min-height:62px;width:100%}
 #runbar .pulse{width:11px;height:11px;border-radius:99px;background:var(--ink);flex:none;animation:beat 1.4s ease-in-out infinite}
 @keyframes beat{0%,100%{opacity:1}50%{opacity:.28}}
@@ -288,6 +290,7 @@ nav#tabs .pip{position:absolute;top:12px;right:calc(50% - 20px);min-width:9px;he
 .won .sm{display:block;font-variation-settings:'wdth' 90,'wght' 600;font-size:.8rem;color:var(--dim);margin-top:6px;position:relative;z-index:1}
 /* ══════════ toast ══════════ */
 #toast{position:fixed;left:50%;bottom:calc(100px + env(safe-area-inset-bottom));z-index:90;
+  transition:bottom .3s var(--snap);
   transform:translateX(-50%) translateY(12px);background:var(--ink);color:#fff;border-radius:var(--r);
   font-variation-settings:'wdth' 86,'wght' 750;font-size:.82rem;text-transform:uppercase;letter-spacing:.06em;
   padding:14px var(--s5);max-width:88vw;text-align:center;opacity:0;pointer-events:none;transition:.26s var(--snap);
@@ -340,6 +343,7 @@ nav#tabs .pip{position:absolute;top:12px;right:calc(50% - 20px);min-width:9px;he
 .bk-sentmk i{height:13px;background:var(--orange);border:2.5px solid var(--ink)}
 .bk-sentmk i:nth-child(1){width:36px}.bk-sentmk i:nth-child(2){width:56px}.bk-sentmk i:nth-child(3){width:24px}
 #bk-send[disabled]{opacity:.55;pointer-events:none}
+body.hasbar #toast{bottom:calc(170px + env(safe-area-inset-bottom))}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}}
 </style>
 </head>
