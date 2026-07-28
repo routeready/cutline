@@ -79,6 +79,8 @@ header{position:sticky;top:0;z-index:8;background:var(--ink);color:#fff}
   font-variation-settings:'wdth' 88,'wght' 700;font-size:.74rem;color:#fff;display:flex;gap:6px;align-items:center}
 .mast .wx.wet{border-color:var(--orange);color:var(--orangeL)}
 .mast .wx svg{width:11px;height:11px}
+.mast .wx .go{font-size:.85rem;color:var(--dim);margin-left:1px}
+.mast .wx:active{transform:scale(.96)}
 /* ══════════ hero block ══════════ */
 .hero{background:var(--ink);color:#fff;border-radius:var(--r);padding:var(--s4);position:relative;overflow:hidden}
 .hero::after{content:'';position:absolute;top:0;right:0;bottom:0;width:76px;pointer-events:none;
@@ -353,7 +355,7 @@ body.hasbar #toast{bottom:calc(170px + env(safe-area-inset-bottom))}
     <span class="bars"><i></i><i></i><i></i></span>
     <span class="tx"><b id="m-biz">CUTLINE</b><span id="m-date">—</span></span>
   </div>
-  <div class="wx" id="m-wx" style="display:none"></div>
+  <a class="wx" id="m-wx" style="display:none" href="https://www.theweathernetwork.com/ca/weather/ontario/north-bay" target="_blank" rel="noopener" aria-label="Open the full forecast"></a>
 </div></header>
 
 <main class="wrap"><div id="view"></div></main>
@@ -1546,7 +1548,7 @@ function render(){
   $('#m-date').textContent=new Date().toLocaleDateString('en-CA',{weekday:'long',month:'short',day:'numeric'});
   const w=wxFor(todayISO()),el=$('#m-wx');
   if(w){el.style.display='flex';el.className='wx'+(w.pop>=RAIN_POP?' wet':'');
-    el.innerHTML=`${DROP}<span class="num">${w.pop}% · ${w.t}°</span>`;}
+    el.innerHTML=`${DROP}<span class="num">${w.pop}% · ${w.t}°</span><span class="go">›</span>`;}
   renderTabs();
   $('#view').innerHTML={today:vToday,week:vWeek,lawns:vLawns,books:vBooks}[TAB]();
   if(TAB==='today')countUp();
