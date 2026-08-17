@@ -536,10 +536,15 @@ const isIOS=/iP(hone|ad|od)/.test(navigator.userAgent);
 const DB_KEY='cutline.v1';
 const FRESH=()=>({
   settings:{biz:'Cutline',me:'',et:'',homeAddr:'North Bay, ON',lat:46.3091,lng:-79.4608,target:70,defPrice:50,maps:'apple'},
-  clients:[],jobs:[],ledger:[],requests:[],fuel:[],
+  clients:[],jobs:[],ledger:[],requests:[],fuel:[],legs:[],
   equip:{hours:0,bladeAt:0,bladeInt:25,oilAt:0,oilInt:50},
   meta:{genThrough:'',wx:null,lastExport:null,created:todayISO()}
 });
+/* geo fields carried by anything that owns a position — every client, and the
+   one-time jobs that keep their own coordinates. lat/lng are older than this and
+   stay where they are. Existing records get the same shape from backfillRecords(). */
+const GEO0=()=>({posSrc:null,posAcc:null,posAt:null});
+const AER0=()=>({aerated:null,aerOk:null});
 let db;
 try{db=Object.assign(FRESH(),JSON.parse(LS.getItem(DB_KEY)||'{}'));}
 catch(e){db=FRESH();}
@@ -607,6 +612,8 @@ async function pullDoc(){
       db.equip=Object.assign(FRESH().equip,db.equip||{});
       db.meta=Object.assign(FRESH().meta,db.meta||{});
       REV=r.rev;LS.setItem('cutline.rev',REV);
+      /* the pulled doc can be older than this device's schema — backfill before it lands */
+      backfillRecords();
       clearTimeout(pushT);flushNoPush();ensureJobs();rollOverdue();render();
     }
     SYNC.st='ok';SYNC.at=Date.now();LS.setItem('cutline.at',SYNC.at);paintSync();return true;
@@ -886,23 +893,23 @@ async function pasteBooking(){
 function saveRequest(p){db.requests.push({id:uid(),...p,ts:Date.now(),st:'new'});save();render();}
 function acceptOnce(p,dateISO,price,reqId){
   const jid=uid();
-  db.jobs.push({id:jid,cid:null,oid:uid(),name:p.name,phone:p.phone,addr:p.addr,lat:null,lng:null,
+  db.jobs.push({id:jid,cid:null,oid:uid(),name:p.name,phone:p.phone,addr:p.addr,lat:null,lng:null,...GEO0(),
     date:dateISO,ord:1e6,st:'sched',typ:'od',price:+price||db.settings.defPrice,min:0,notes:p.notes||''});
   normalizeOrders();
   if(reqId){const _r=db.requests.find(r=>r.id===reqId);if(_r&&_r.sid)ackBooking(_r.sid,'accepted');db.requests=db.requests.filter(r=>r.id!==reqId);}
   save();closeSheet();render();toast(`Added ${p.name} — ${niceDate(dateISO)}`);
-  geocode(p.addr).then(g=>{const j=job(jid);if(g&&j&&j.lat==null){j.lat=g.lat;j.lng=g.lng;save();}});
+  geocode(p.addr).then(g=>{const j=job(jid);if(g&&j&&j.lat==null){j.lat=g.lat;j.lng=g.lng;j.posSrc='geo';j.posAt=Date.now();save();}});
 }
 function nextDow(day){let d=todayISO();for(let i=0;i<8;i++){if(dow(d)===day&&d>=todayISO())return d;d=addDays(d,1);}return todayISO();}
 function acceptRecurring(p,cad,day,price,reqId){
   const anchor=nextDow(day);
-  const c={id:uid(),name:p.name,phone:p.phone,addr:p.addr,lat:null,lng:null,cad,day,anchor,
+  const c={id:uid(),name:p.name,phone:p.phone,addr:p.addr,lat:null,lng:null,...GEO0(),...AER0(),cad,day,anchor,
     price:+price||db.settings.defPrice,prepay:0,gate:'',dog:false,notes:p.notes||'',active:true,paused:[],created:todayISO()};
   db.clients.push(c);
   if(reqId){const _r=db.requests.find(r=>r.id===reqId);if(_r&&_r.sid)ackBooking(_r.sid,'accepted');db.requests=db.requests.filter(r=>r.id!==reqId);}
   db.meta.genThrough='';ensureJobs();save();closeSheet();render();
   toast(`${p.name} added — first cut ${niceDate(anchor)}`);
-  geocode(p.addr).then(g=>{if(g){c.lat=g.lat;c.lng=g.lng;save();}});
+  geocode(p.addr).then(g=>{if(g){c.lat=g.lat;c.lng=g.lng;c.posSrc='geo';c.posAt=Date.now();save();}});
 }
 function declineReq(r){
   if(r.sid)ackBooking(r.sid,'declined');
@@ -925,7 +932,7 @@ $('#importfile').addEventListener('change',e=>{
   r.onload=()=>{try{
     const j=JSON.parse(r.result);
     if(!j.settings||!Array.isArray(j.clients))throw 0;
-    db=Object.assign(FRESH(),j);db.settings=Object.assign(FRESH().settings,db.settings||{});db.equip=Object.assign(FRESH().equip,db.equip||{});db.meta=Object.assign(FRESH().meta,db.meta||{});db.meta.genThrough='';ensureJobs();rollOverdue();save();render();toast('Backup restored');
+    db=Object.assign(FRESH(),j);db.settings=Object.assign(FRESH().settings,db.settings||{});db.equip=Object.assign(FRESH().equip,db.equip||{});db.meta=Object.assign(FRESH().meta,db.meta||{});db.meta.genThrough='';backfillRecords();ensureJobs();rollOverdue();save();render();toast('Backup restored');
   }catch(err){toast('That file is not a Cutline backup');}};
   r.readAsText(f);e.target.value='';
 });
@@ -941,10 +948,12 @@ function backupStale(){
 function haptic(p){try{navigator.vibrate&&navigator.vibrate(p)}catch(e){}}
 function openSheet(h){const d=$('#sheet');$('#sc').innerHTML=h;$('#sc').scrollTop=0;if(!d.open){if(typeof d.showModal==='function')d.showModal();else d.setAttribute('open','');}}
 function closeSheet(){const d=$('#sheet');if(!d.open)return;if(typeof d.close==='function')d.close();else d.removeAttribute('open');}
-$('#sheet').addEventListener('click',e=>{if(e.target===e.currentTarget)closeSheet();});
+$('#sheet').addEventListener('click',e=>{if(MIGGATE)return;if(e.target===e.currentTarget)closeSheet();});
+$('#sheet').addEventListener('cancel',e=>{if(MIGGATE)e.preventDefault();});
 document.addEventListener('keydown',e=>{
   if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();return openPal();}
   if(e.key!=='Escape')return;
+  if(MIGGATE)return;
   if($('#sheet').open)closeSheet();else if(FIELDON)closeField();else if(BK&&BK.preview&&$('#bookpage').classList.contains('on'))exitBooking();});
 const stag=i=>`animation-delay:${Math.min(i,9)*34}ms`;
 
@@ -1426,13 +1435,13 @@ async function saveClient(id){
     dog:$('#c-dog').classList.contains('on'),notes:$('#c-notes').value.trim()};
   let c=id?client(id):null;
   const addrNew=!c||c.addr!==v.addr,cadNew=!c||c.cad!==v.cad||c.day!==v.day;
-  if(!c){c={id:uid(),lat:null,lng:null,prepay:0,active:true,paused:[],created:todayISO(),anchor:nextDow(v.day)};db.clients.push(c);}
+  if(!c){c={id:uid(),lat:null,lng:null,...GEO0(),...AER0(),prepay:0,active:true,paused:[],created:todayISO(),anchor:nextDow(v.day)};db.clients.push(c);}
   Object.assign(c,v);
   if(cadNew){c.anchor=nextDow(c.day);
     db.jobs=db.jobs.filter(j=>!(j.cid===c.id&&j.typ==='route'&&j.st==='sched'&&j.date>=todayISO()));
     db.meta.genThrough='';}
   ensureJobs();save();closeSheet();render();haptic(10);toast(id?'Saved':`${name.split(' ')[0]} added`);
-  if(addrNew&&v.addr){const g=await geocode(v.addr);if(g){c.lat=g.lat;c.lng=g.lng;save();}else toast('No map pin — sorts last on routes');}
+  if(addrNew&&v.addr){const g=await geocode(v.addr);if(g){c.lat=g.lat;c.lng=g.lng;c.posSrc='geo';c.posAt=Date.now();save();}else toast('No map pin — sorts last on routes');}
 }
 function toggleActive(id){const c=client(id);c.active=!c.active;
   if(!c.active)db.jobs=db.jobs.filter(j=>!(j.cid===id&&j.st==='sched'&&j.date>=todayISO()));
@@ -1713,7 +1722,7 @@ function textStatement(cid){
 function loadSample(){
   if(db.clients.length||db.jobs.length)return toast('Sample loads only into an empty book');
   const t=todayISO(),d0=dow(t);
-  const mk=(name,phone,addr,cad,day,price,x)=>Object.assign({id:uid(),name,phone,addr,lat:null,lng:null,cad,day,anchor:nextDow(day),
+  const mk=(name,phone,addr,cad,day,price,x)=>Object.assign({id:uid(),name,phone,addr,lat:null,lng:null,...GEO0(),...AER0(),cad,day,anchor:nextDow(day),
     price,prepay:0,gate:'',dog:false,notes:'',active:true,paused:[],created:addDays(t,-21)},x||{});
   const c1=mk('Sarah Thompson','705 555 0123','42 Lakeshore Dr, North Bay','weekly',d0,55);
   const c2=mk('D. Marchand','705 555 0177','118 Trout Lake Rd, North Bay','biweekly',d0,70,{gate:'4417'});
@@ -1726,7 +1735,7 @@ function loadSample(){
                        :{id:uid(),cid:c.id,jid:j.id,date,amt:c.price,st:'due',typ:'cut',who:c.name,ph:c.phone});
     return j;};
   dj(c1,7,38,true);dj(c1,14,41,true);dj(c2,14,52,true);dj(c4,6,47,true);dj(c3,5,33,false);
-  const od={id:uid(),cid:null,oid:uid(),name:'Corner lot on Marshall',phone:'',addr:'64 Marshall Ave, North Bay',lat:null,lng:null,
+  const od={id:uid(),cid:null,oid:uid(),name:'Corner lot on Marshall',phone:'',addr:'64 Marshall Ave, North Bay',lat:null,lng:null,...GEO0(),
     date:addDays(t,-3),ord:1,st:'done',typ:'od',price:65,min:44,notes:''};
   db.jobs.push(od);
   db.ledger.push({id:uid(),cid:null,jid:od.id,oid:od.oid,date:od.date,amt:65,st:'paid',paid:od.date,meth:'Cash',typ:'cut',who:od.name});
@@ -1796,18 +1805,132 @@ addEventListener('touchend',e=>{
   if(dy>90){toast('Refreshing');ensureJobs();rollOverdue();loadWeather().then(render);if(canSync()){pullDoc().then(()=>fetchBookings());}}
 },{passive:true});
 
-/* ══════════════ SCHEMA STAMP + PRE-v3 BACKUP ══════════════
-   v3 reads the v2 schema unchanged (cutline.v1). First boot keeps a frozen
-   copy of the v2 payload under cutline.v2.backup, then stamps
-   cutline_schema_version=3. One-time; nothing else changes. */
-(function migrate(){
+/* ══════════════ SCHEMA STAMP + MIGRATIONS ══════════════
+   Forward-only, additive, idempotent. Nothing is ever renamed or removed.
+
+   v3 read the v2 schema unchanged (cutline.v1) and froze a copy of the v2
+   payload under cutline.v2.backup. v4 adds the geo capture fields. The stamp
+   is now compared as a number rather than merely probed, so the next
+   migration after this one can actually run — the old presence check would
+   have skipped it on every phone that already carried a stamp. */
+const SCHEMA=4;
+const schemaAt=()=>+(LS.getItem('cutline_schema_version')||0);
+let MIGGATE=false;
+
+/* Additive field backfill. Only writes keys that are missing, so a second run
+   changes nothing. Called by the migration, and again any time the whole doc
+   is replaced from elsewhere — a server pull, a restored backup file — since
+   those can arrive shaped for an older schema. */
+function backfillRecords(){
+  let n=0;
+  for(const c of db.clients){
+    /* lat/lng predate this and are already populated by address geocoding.
+       Those pins are the least trustworthy source in the book, so they are
+       marked 'geo' and stay open to correction by any GPS fix that clears the
+       accuracy gate. 'manual' is the one source capture must never overwrite. */
+    if(!('posSrc'in c)){c.posSrc=(c.lat!=null&&c.lng!=null)?'geo':null;n++;}
+    if(!('posAcc'in c)){c.posAcc=null;n++;}
+    if(!('posAt'in c)){c.posAt=null;n++;}
+    if(!('aerated'in c)){c.aerated=null;n++;}
+    if(!('aerOk'in c)){c.aerOk=null;n++;}
+  }
+  for(const j of db.jobs){
+    if(!('p0'in j)){j.p0=null;n++;}   /* position at timer start, mirrors t0 */
+    if(!('p1'in j)){j.p1=null;n++;}   /* position at timer stop,  mirrors t1 */
+    /* one-time cuts own their coordinates, so they own their provenance too */
+    if(j.cid==null&&!('posSrc'in j)){Object.assign(j,GEO0());j.posSrc=(j.lat!=null&&j.lng!=null)?'geo':null;n++;}
+  }
+  if(!Array.isArray(db.legs)){db.legs=[];n++;}
+  return n;
+}
+
+/* what the book weighs, so we can watch it over a season */
+function stateBytes(){
+  let doc=0,all=0;
+  const size=s=>{try{return new Blob([s]).size;}catch(e){return String(s).length;}};
+  try{doc=size(JSON.stringify(db));}catch(e){}
+  try{for(let i=0;i<LS.length;i++){const k=LS.key(i);if(k&&k.indexOf('cutline')===0)all+=k.length+size(LS.getItem(k)||'');}}catch(e){}
+  return{doc,all};
+}
+function logStateSize(tag){
+  const b=stateBytes(),kb=n=>(n/1024).toFixed(1)+' KB';
+  console.log(`Cutline ${tag} · schema v${schemaAt()} · doc ${kb(b.doc)} · cutline.* storage ${kb(b.all)} · `+
+    `${db.clients.length} lawns, ${db.jobs.length} cuts, ${db.ledger.length} ledger rows, ${db.legs.length} legs`);
+  return b;
+}
+
+/* The migration proper. Snapshot first, mutate second, stamp last. If any of
+   it throws, the prior payload goes back exactly as it was and the stamp is
+   left alone, so the next boot tries again rather than running on half-built
+   state. */
+function migrateTo4(){
+  const before=LS.getItem(DB_KEY);
   try{
-    if(LS.getItem('cutline_schema_version'))return;
-    const raw=LS.getItem(DB_KEY);
-    if(raw)LS.setItem('cutline.v2.backup',raw);
-    LS.setItem('cutline_schema_version','3');
-  }catch(e){}
-})();
+    if(before&&LS.getItem('cutline.v3.backup')==null)LS.setItem('cutline.v3.backup',before);
+    backfillRecords();
+    LS.setItem(DB_KEY,JSON.stringify(db));
+    LS.setItem('cutline_schema_version',String(SCHEMA));
+    logStateSize('migrated to v'+SCHEMA);
+    return true;
+  }catch(e){
+    console.error('Cutline migration failed — nothing was changed',e);
+    /* memory first: rebuilding db from the snapshot always works, while the
+       disk write is the thing most likely to have thrown in the first place.
+       Doing it the other way round leaves half-backfilled records in memory. */
+    if(before!=null){
+      try{
+        db=Object.assign(FRESH(),JSON.parse(before));
+        db.settings=Object.assign(FRESH().settings,db.settings||{});
+        db.equip=Object.assign(FRESH().equip,db.equip||{});
+        db.meta=Object.assign(FRESH().meta,db.meta||{});
+      }catch(_){}
+      try{LS.setItem(DB_KEY,before);}catch(_){}
+    }
+    migFailed(e);
+    return false;
+  }
+}
+
+/* Boot gate. Nothing on file yet means nothing to lose — migrate quietly.
+   With a real book on the phone, §4 wants a file in his hands first, so the
+   sheet blocks until he has one. */
+function runSchemaGate(){
+  /* preserve v3's frozen pre-v3 copy for anyone arriving without a stamp */
+  try{if(!LS.getItem('cutline_schema_version')){const raw=LS.getItem(DB_KEY);if(raw)LS.setItem('cutline.v2.backup',raw);}}catch(e){}
+  if(schemaAt()>=SCHEMA){logStateSize('boot');return false;}
+  if(!db.clients.length&&!db.jobs.length&&!db.ledger.length){migrateTo4();return false;}
+  MIGGATE=true;
+  openSheet(`<div class="sh"><div><div class="eb">One time only</div><h3>Save a copy first</h3>
+    <div class="sub">This update gives every lawn a place to keep its map pin. Nothing is removed and nothing is renamed — but put the whole book somewhere other than this phone before it runs.</div></div></div>
+    <div class="panel pad">
+      <div class="kv"><span class="k">Lawns</span><b class="v">${db.clients.length}</b></div>
+      <div class="kv"><span class="k">Cuts on file</span><b class="v">${db.jobs.length}</b></div>
+      <div class="kv"><span class="k">Ledger rows</span><b class="v">${db.ledger.length}</b></div></div>
+    <button class="btn pri slab" id="mig-export" onclick="migExport()">Export a backup</button>
+    <button class="btn slab" id="mig-go" style="margin-top:var(--s2)" disabled onclick="migGo()">I have the file — carry on</button>
+    <div class="hint" style="margin-top:var(--s3)">A copy stays in the phone's storage either way, but that copy goes wherever the phone goes.</div>`);
+  return true;
+}
+function migExport(){
+  exportBackup();
+  const g=$('#mig-go');if(g)g.disabled=false;
+  const e=$('#mig-export');if(e)e.textContent='Export it again';
+  toast(`Saved cutline-backup-${todayISO()}.json`);
+}
+function migGo(){
+  MIGGATE=false;closeSheet();
+  if(migrateTo4()){render();checkIntake();}
+}
+function migFailed(e){
+  MIGGATE=false;closeSheet();
+  setTimeout(()=>{
+    MIGGATE=true;
+    openSheet(`<div class="sh"><div><div class="eb">Nothing was changed</div><h3>The update didn't finish</h3>
+      <div class="sub">Your lawns, cuts and money are exactly as they were, and the app works normally. It will try again next time you open it. If it keeps failing, send that backup file on.</div></div></div>
+      <div class="panel pad"><div class="kv"><span class="k">What went wrong</span><span class="v" style="max-width:62%;font-family:var(--mono);font-size:var(--fs-0)">${esc(String((e&&e.message)||e||'unknown'))}</span></div></div>
+      <button class="btn slab" onclick="MIGGATE=false;closeSheet();">Keep working</button>`);
+  },40);
+}
 
 /* ══════════════ BOOT ══════════════ */
 function countUp(){
@@ -1840,14 +1963,18 @@ ensureJobs();rollOverdue();render();
 const _bk=readBookParam();
 if(_bk)enterBooking(_bk);
 else if(IS_SERVED&&location.pathname.replace(/\/+$/,'')==='/book')enterCustomer();
-else checkIntake();
+/* the gate never shows on the customer's booking page — only on his own app.
+   When it does show, intake waits until he's through it. */
+else if(!runSchemaGate())checkIntake();
 if(!_bk)pullDoc().then(()=>fetchBookings());
 loadWeather().then(render);
 if(IS_SERVED&&'serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});
 window.addEventListener('hashchange',()=>{const b=readBookParam();if(b)enterBooking(b);else checkIntake();});
 /* console bridge — debugging + test rig access to closure-scoped state */
 window.CUT={get db(){return db},set db(v){db=v},money,numval,clockOf,addDays,todayISO,diffDays,fmtMin,iso,parseISO,isoWeek,b64d,encodeBooking,esc,uid,job,client,save,FRESH,
-  pushDoc,pullDoc,fetchBookings,ackBooking,syncNow,setTok,setSrv,get SYNC(){return SYNC},get REV(){return REV},get TOK(){return TOK}};
+  pushDoc,pullDoc,fetchBookings,ackBooking,syncNow,setTok,setSrv,get SYNC(){return SYNC},get REV(){return REV},get TOK(){return TOK},
+  SCHEMA,schemaAt,backfillRecords,migrateTo4,runSchemaGate,stateBytes,logStateSize,GEO0,AER0,get MIGGATE(){return MIGGATE},
+  startJob,finishJob,abortTimer,render};
 
 </script>
 </body>
