@@ -538,7 +538,7 @@ const FRESH=()=>({
   settings:{biz:'Cutline',me:'',et:'',homeAddr:'North Bay, ON',lat:46.3091,lng:-79.4608,target:70,defPrice:50,maps:'apple'},
   clients:[],jobs:[],ledger:[],requests:[],fuel:[],legs:[],
   equip:{hours:0,bladeAt:0,bladeInt:25,oilAt:0,oilInt:50},
-  meta:{genThrough:'',wx:null,lastExport:null,created:todayISO()}
+  meta:{genThrough:'',wx:null,lastExport:null,created:todayISO(),geo:null,geoAt:null,lastStop:null}
 });
 /* geo fields carried by anything that owns a position — every client, and the
    one-time jobs that keep their own coordinates. lat/lng are older than this and
@@ -797,12 +797,145 @@ const TPL={
   decline:n=>`Hi ${n.split(' ')[0]}, thanks for the request — unfortunately I'm at capacity right now and can't take it on. Appreciate you thinking of me. — ${db.settings.biz}`
 };
 
+/* ══════════════ CAPTURE ══════════════
+   The phone already knows where it is when the timer starts and what time it
+   is when it stops. That's enough to learn both where every lawn is and what
+   the hop between two of them really costs, without geocoding a rural address
+   or paying for a routing API. Nothing here is allowed to block the timer,
+   throw, or put a dialog in front of him in the field. */
+const FIX_TIMEOUT=15000;   /* iOS is slow and loose on the first fix after a cold start */
+const FIX_MAX_AGE=60000;   /* an older fix belongs to a different driveway */
+const FIX_MAX_ACC=50;      /* metres. A 2km-wide fix puts the pin in the lake */
+const FIX_BETTER=0.7;      /* a replacement fix has to be clearly tighter, not a hair */
+const LEG_MIN_SEC=30;      /* under this he never actually left the property */
+const LEG_MAX_SEC=90*60;   /* over this he went home, ate dinner, or took a call */
+
+/* One rule for every pin the app writes, wherever it came from. A manual
+   placement is a deliberate human decision and nothing overwrites it. A
+   measured fix beats a geocoded guess. Two measured fixes only trade places
+   when the newer one is clearly tighter than the one on file. */
+const POSRANK={manual:3,gps:2,geo:1};
+const posRank=s=>POSRANK[s]||0;
+function writePos(rec,lat,lng,src,acc){
+  if(!rec||lat==null||lng==null)return false;
+  if(rec.lat!=null&&rec.lng!=null){
+    const from=posRank(rec.posSrc),to=posRank(src);
+    if(to<from)return false;
+    /* same rank: a fresh geocode means the address changed and a fresh manual
+       placement means he moved the pin himself — both intentional, both go
+       through. Two GPS fixes are the only case that has to argue on accuracy. */
+    if(to===from&&src==='gps'&&!(acc!=null&&(rec.posAcc==null||acc<=rec.posAcc*FIX_BETTER)))return false;
+  }
+  rec.lat=lat;rec.lng=lng;rec.posSrc=src;
+  rec.posAcc=acc==null?null:Math.round(acc);
+  rec.posAt=Date.now();
+  return true;
+}
+
+/* Resolves to a fix or to null. Never rejects, never throws, and never waits
+   longer than it promised — some browsers accept the call and then say nothing
+   at all, so there's a hard backstop under the platform timeout. */
+function getFix(){
+  return new Promise(res=>{
+    let done=false;
+    const finish=v=>{if(done)return;done=true;res(v);};
+    if(!navigator.geolocation)return finish(null);
+    setTimeout(()=>finish(null),FIX_TIMEOUT+2000);
+    try{
+      navigator.geolocation.getCurrentPosition(
+        p=>{noteGeo('ok');
+          finish({lat:p.coords.latitude,lng:p.coords.longitude,acc:p.coords.accuracy,at:Date.now()});},
+        e=>{noteGeo(e&&e.code===1?'denied':e&&e.code===2?'unavailable':'timeout');finish(null);},
+        {enableHighAccuracy:true,timeout:FIX_TIMEOUT,maximumAge:FIX_MAX_AGE});
+    }catch(e){noteGeo('unavailable');finish(null);}
+  });
+}
+/* Remembered so Settings can say so once, quietly. We still call on the next
+   timer start rather than locking ourselves out: a denied browser errors
+   straight back without prompting, so this never nags — and it means turning
+   permission back on starts working again without hunting for a reset. */
+function noteGeo(st){
+  if(db.meta.geo===st)return;
+  db.meta.geo=st;db.meta.geoAt=Date.now();save();
+}
+
+/* Timer start. Fired after the timer is already running — a fix that never
+   arrives costs nothing but a pin. */
+function captureStart(id){
+  const j0=job(id),t0=j0&&j0.t0;
+  if(!t0)return;
+  getFix().then(f=>{
+    const j=job(id);
+    if(!f||!j||j.t0!==t0)return;   /* abandoned or restarted while we waited */
+    j.p0={lat:f.lat,lng:f.lng,acc:Math.round(f.acc),at:f.at};
+    /* the pin is the property's, not the cut's — a one-time cut is its own property */
+    if(f.acc<=FIX_MAX_ACC)writePos(j.cid?client(j.cid):j,f.lat,f.lng,'gps',f.acc);
+    save();
+    if(TAB==='today'&&!FIELDON)render();
+  }).catch(()=>{});
+}
+/* Timer stop. The position is recorded for the audit trail; the leg is decided
+   from the clock alone, so it doesn't wait on a fix that may never come. */
+function captureStop(id){
+  const j0=job(id),t1=j0&&j0.t1;
+  if(!t1)return;
+  getFix().then(f=>{
+    const j=job(id);
+    if(!f||!j||j.t1!==t1)return;
+    j.p1={lat:f.lat,lng:f.lng,acc:Math.round(f.acc),at:f.at};
+    if(f.acc<=FIX_MAX_ACC)writePos(j.cid?client(j.cid):j,f.lat,f.lng,'gps',f.acc);
+    save();
+    if(TAB==='today'&&!FIELDON)render();
+  }).catch(()=>{});
+}
+
+/* A stop is keyed by the property it happened at. One-time cuts have no client
+   record, so they key off the id the ledger already groups them by. */
+function stopKey(j){return j.cid||('o:'+(j.oid||j.id));}
+function posOfKey(k){
+  if(!k)return null;
+  if(String(k).indexOf('o:')===0){
+    const j=db.jobs.find(x=>x.cid==null&&('o:'+(x.oid||x.id))===k);
+    return j&&j.lat!=null&&j.lng!=null?{lat:j.lat,lng:j.lng}:null;
+  }
+  const c=client(k);
+  return c&&c.lat!=null&&c.lng!=null?{lat:c.lat,lng:c.lng}:null;
+}
+/* Raw observations only, one row per hop, never aggregated on write — the
+   median algorithm will change and this history has to survive it. Note that
+   this is the time between stops, not drive time: it includes opening the gate
+   and unloading the trailer, which is the real cost of the stop. */
+function recordLeg(j){
+  const here=stopKey(j),prev=db.meta.lastStop;
+  if(prev&&prev.key&&prev.key!==here&&j.t0){
+    const sec=Math.round((j.t0-prev.at)/1000);
+    if(sec>=LEG_MIN_SEC&&sec<=LEG_MAX_SEC){
+      const a=posOfKey(prev.key),b=posOfKey(here);
+      /* coordinates live on the row as well as the keys, so a later change of
+         algorithm can re-read the raw observation without a lookup */
+      if(a&&b)db.legs.push({id:uid(),from:prev.key,to:here,sec,ts:Date.now(),fromPos:a,toPos:b});
+    }
+    /* outside the window it goes in the bin without a word */
+  }
+  db.meta.lastStop={key:here,at:j.t1||Date.now()};
+}
+
+/* how much of the notebook is filled */
+function mapped(){
+  const act=db.clients.filter(c=>c.active);
+  return{n:act.filter(c=>c.lat!=null&&c.lng!=null).length,of:act.length};
+}
+
 /* ---------- job flow ---------- */
 let tickT=null;
 function startJob(id){
   const act=db.jobs.find(j=>j.st==='active');
   if(act&&act.id!==id){toast(`Finish ${jobName(act)} first`);return openJob(act.id);}
   const j=job(id);j.st='active';j.t0=Date.now();save(true);closeSheet();render();openField();
+  /* last, and unawaited — the timer is already running and stays running
+     whether or not a fix ever turns up. Starting a cut is also a user gesture,
+     which is what iOS wants before it will raise the permission prompt. */
+  captureStart(id);
 }
 function finishJob(id){
   const j=job(id);
@@ -825,7 +958,9 @@ function finishJob(id){
       if(rem>0)db.ledger.push({id:uid(),cid:j.cid,jid:j.id,oid:j.oid||null,date:todayISO(),amt:rem,st:'due',typ:'cut',who:jobName(j),ph:jobPhone(j)});
     }
   }
+  recordLeg(j);
   save(true);afterFinish(id,min);
+  captureStop(id);
 }
 function pushJob(id,days){const j=job(id);j.date=addDays(j.date,days);j.ord=1e6;delete j.carried;normalizeOrders();save();closeSheet();render();toast(`Moved to ${niceDate(j.date)}`);}
 function skipJob(id){const j=job(id);j.st='skip';save();closeSheet();render();toast('Skipped');}
@@ -898,7 +1033,7 @@ function acceptOnce(p,dateISO,price,reqId){
   normalizeOrders();
   if(reqId){const _r=db.requests.find(r=>r.id===reqId);if(_r&&_r.sid)ackBooking(_r.sid,'accepted');db.requests=db.requests.filter(r=>r.id!==reqId);}
   save();closeSheet();render();toast(`Added ${p.name} — ${niceDate(dateISO)}`);
-  geocode(p.addr).then(g=>{const j=job(jid);if(g&&j&&j.lat==null){j.lat=g.lat;j.lng=g.lng;j.posSrc='geo';j.posAt=Date.now();save();}});
+  geocode(p.addr).then(g=>{const j=job(jid);if(g&&j&&writePos(j,g.lat,g.lng,'geo',null))save();});
 }
 function nextDow(day){let d=todayISO();for(let i=0;i<8;i++){if(dow(d)===day&&d>=todayISO())return d;d=addDays(d,1);}return todayISO();}
 function acceptRecurring(p,cad,day,price,reqId){
@@ -909,7 +1044,7 @@ function acceptRecurring(p,cad,day,price,reqId){
   if(reqId){const _r=db.requests.find(r=>r.id===reqId);if(_r&&_r.sid)ackBooking(_r.sid,'accepted');db.requests=db.requests.filter(r=>r.id!==reqId);}
   db.meta.genThrough='';ensureJobs();save();closeSheet();render();
   toast(`${p.name} added — first cut ${niceDate(anchor)}`);
-  geocode(p.addr).then(g=>{if(g){c.lat=g.lat;c.lng=g.lng;c.posSrc='geo';c.posAt=Date.now();save();}});
+  geocode(p.addr).then(g=>{if(g&&writePos(c,g.lat,g.lng,'geo',null))save();});
 }
 function declineReq(r){
   if(r.sid)ackBooking(r.sid,'declined');
@@ -1042,6 +1177,11 @@ function vToday(){
       </button>`;
     }).join('')+'</div>';
   }
+  /* The notebook filling up, and nothing more. It disappears once every lawn
+     has a pin — at that point it has nothing left to tell him. */
+  const mp=mapped();
+  if(mp.of&&mp.n<mp.of)
+    h+=`<div class="hint" style="text-align:center;margin:var(--s3) 0 var(--s2)">${mp.n} of ${mp.of} mapped</div>`;
   h+=`<button class="addcut" onclick="openQuickAdd('${t}')">＋ Add a cut</button>`;
   return h;
 }
@@ -1259,6 +1399,11 @@ h+=`<section><div class="hd"><h2>Setup</h2></div>
       <label class="f"><span class="stencil">Home base</span><input id="homeaddr" value="${esc(db.settings.homeAddr)}"></label>
       <button class="btn sm" style="margin-top:var(--s2)" onclick="setHome()">Drop the pin</button>
       <div class="hint num" style="margin-top:var(--s2)">${db.settings.lat.toFixed(4)}, ${db.settings.lng.toFixed(4)} — routes and rain start here.</div>
+      ${(()=>{const mp=mapped();
+        return `<div class="kv" style="margin-top:var(--s4)"><span class="k">Lawns with a map pin</span><b class="v">${mp.n} of ${mp.of}</b></div>`
+        +(db.meta.geo==='denied'
+          ? `<div class="hint" style="margin-top:var(--s2)">Location is off for Cutline. Turn it on in your phone's settings and each cut drops its own pin as you work.</div>`
+          : `<div class="hint" style="margin-top:var(--s2)">Pins fill in on their own as you start each cut.</div>`);})()}
       <div class="g2" style="margin-top:var(--s4)">
         <label class="f"><span class="stencil">Target $/hr</span><input inputmode="numeric" value="${db.settings.target}" onchange="db.settings.target=numval(this.value)||70;save();render()"></label>
         <label class="f"><span class="stencil">Default price</span><input inputmode="numeric" value="${db.settings.defPrice}" onchange="db.settings.defPrice=numval(this.value)||50;save()"></label></div>
@@ -1378,7 +1523,9 @@ function afterFinish(id,min){
   openJob(id);
   toast(`${fmtMin(min)} · ${money(j.price)} logged`);
 }
-function abortTimer(id){const j=job(id);j.st='sched';delete j.t0;save();closeField();render();toast('Timer stopped');}
+/* Stopping without logging is not a stop: no cut, no leg, and the start
+   position goes with it rather than hanging off a cut that never happened. */
+function abortTimer(id){const j=job(id);j.st='sched';delete j.t0;j.p0=null;save();closeField();render();toast('Timer stopped');}
 
 /* ══════════════ LAWN CARD ══════════════ */
 function openClient(id){
@@ -1441,7 +1588,8 @@ async function saveClient(id){
     db.jobs=db.jobs.filter(j=>!(j.cid===c.id&&j.typ==='route'&&j.st==='sched'&&j.date>=todayISO()));
     db.meta.genThrough='';}
   ensureJobs();save();closeSheet();render();haptic(10);toast(id?'Saved':`${name.split(' ')[0]} added`);
-  if(addrNew&&v.addr){const g=await geocode(v.addr);if(g){c.lat=g.lat;c.lng=g.lng;c.posSrc='geo';c.posAt=Date.now();save();}else toast('No map pin — sorts last on routes');}
+  /* a geocode of the new address must not overwrite a pin he stood on */
+  if(addrNew&&v.addr){const g=await geocode(v.addr);if(g){if(writePos(c,g.lat,g.lng,'geo',null))save();}else if(c.lat==null)toast('No map pin — sorts last on routes');}
 }
 function toggleActive(id){const c=client(id);c.active=!c.active;
   if(!c.active)db.jobs=db.jobs.filter(j=>!(j.cid===id&&j.st==='sched'&&j.date>=todayISO()));
@@ -1974,7 +2122,9 @@ window.addEventListener('hashchange',()=>{const b=readBookParam();if(b)enterBook
 window.CUT={get db(){return db},set db(v){db=v},money,numval,clockOf,addDays,todayISO,diffDays,fmtMin,iso,parseISO,isoWeek,b64d,encodeBooking,esc,uid,job,client,save,FRESH,
   pushDoc,pullDoc,fetchBookings,ackBooking,syncNow,setTok,setSrv,get SYNC(){return SYNC},get REV(){return REV},get TOK(){return TOK},
   SCHEMA,schemaAt,backfillRecords,migrateTo4,runSchemaGate,stateBytes,logStateSize,GEO0,AER0,get MIGGATE(){return MIGGATE},
-  startJob,finishJob,abortTimer,render};
+  startJob,finishJob,abortTimer,render,
+  writePos,getFix,captureStart,captureStop,recordLeg,stopKey,posOfKey,mapped,
+  FIX_TIMEOUT,FIX_MAX_AGE,FIX_MAX_ACC,FIX_BETTER,LEG_MIN_SEC,LEG_MAX_SEC};
 
 </script>
 </body>
