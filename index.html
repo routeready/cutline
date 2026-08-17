@@ -1400,10 +1400,12 @@ h+=`<section><div class="hd"><h2>Setup</h2></div>
       <button class="btn sm" style="margin-top:var(--s2)" onclick="setHome()">Drop the pin</button>
       <div class="hint num" style="margin-top:var(--s2)">${db.settings.lat.toFixed(4)}, ${db.settings.lng.toFixed(4)} — routes and rain start here.</div>
       ${(()=>{const mp=mapped();
-        return `<div class="kv" style="margin-top:var(--s4)"><span class="k">Lawns with a map pin</span><b class="v">${mp.n} of ${mp.of}</b></div>`
-        +(db.meta.geo==='denied'
-          ? `<div class="hint" style="margin-top:var(--s2)">Location is off for Cutline. Turn it on in your phone's settings and each cut drops its own pin as you work.</div>`
-          : `<div class="hint" style="margin-top:var(--s2)">Pins fill in on their own as you start each cut.</div>`);})()}
+        /* an empty book has nothing to report — "0 of 0" is noise on day one */
+        if(!mp.of&&db.meta.geo!=='denied')return '';
+        return (mp.of?`<div class="kv" style="margin-top:var(--s4)"><span class="k">Lawns with a map pin</span><b class="v">${mp.n} of ${mp.of}</b></div>`:'')
+        +`<div class="hint" style="margin-top:var(--s2)">${db.meta.geo==='denied'
+          ? "Location is off for Cutline. Turn it on in your phone's settings and each cut drops its own pin as you work."
+          : 'Pins fill in on their own as you start each cut.'}</div>`;})()}
       <div class="g2" style="margin-top:var(--s4)">
         <label class="f"><span class="stencil">Target $/hr</span><input inputmode="numeric" value="${db.settings.target}" onchange="db.settings.target=numval(this.value)||70;save();render()"></label>
         <label class="f"><span class="stencil">Default price</span><input inputmode="numeric" value="${db.settings.defPrice}" onchange="db.settings.defPrice=numval(this.value)||50;save()"></label></div>
