@@ -994,7 +994,9 @@ function recordLeg(j){
   /* the hop ended when work first began here — not when a paused clock
      restarted after lunch, which happens long after he arrived */
   const t0=firstStart(j);
-  if(prev&&prev.key&&prev.key!==here&&t0){
+  /* a hand-logged job has no measured arrival, so it contributes no leg —
+     but it still marks where he was, so the next hop measures from here */
+  if(prev&&prev.key&&prev.key!==here&&t0&&!j.byHand){
     const sec=Math.round((t0-prev.at)/1000);
     if(sec>=LEG_MIN_SEC&&sec<=LEG_MAX_SEC){
       const a=posOfKey(prev.key),b=posOfKey(here);
@@ -1045,7 +1047,10 @@ function finishJob(id){
      paused job and the running one finish through exactly the same path */
   if(j.st==='active'&&j.t0)(j.sess??=[]).push({t0:j.t0,t1:Date.now()});
   const min=Math.max(1,Math.round(sessMs(j)/60000));
-  j.st='done';j.t1=Date.now();j.min=min;delete j.carried;
+  /* the job ended when its last stretch ended — which is now for a running
+     timer, and the time he typed for one entered by hand */
+  const last=(j.sess||[]).length?+j.sess[j.sess.length-1].t1:0;
+  j.st='done';j.t1=last||Date.now();j.min=min;delete j.carried;
   /* hourly work prices itself the second the clock stops */
   if(isHr(j)){j.billMin=billMin(j,min);j.price=hrAmt(j.rate,j.billMin);}
   /* engine hours belong to the mower. Trimming and cleanup are hand work and
@@ -1069,7 +1074,9 @@ function finishJob(id){
   }
   recordLeg(j);
   save(true);afterFinish(id,min);
-  captureStop(id);
+  /* a job logged after the fact never stood anywhere with the phone in hand,
+     so it drops no pin — the truck's parking spot is not the property */
+  if(!j.byHand)captureStop(id);
 }
 function pushJob(id,days){const j=job(id);j.date=addDays(j.date,days);j.ord=1e6;delete j.carried;normalizeOrders();save();closeSheet();render();toast(`Moved to ${niceDate(j.date)}`);}
 function skipJob(id){const j=job(id);j.st='skip';save();closeSheet();render();toast('Skipped');}
@@ -1627,8 +1634,9 @@ function openField(){
     <div class="addr">${esc(jobAddr(j))||'No address'} · ${hr?`${money(j.rate)}/hr`:money(j.price)}</div>
     ${c&&c.notes?`<div class="note"><span class="stencil">Heads up</span><p>${esc(c.notes)}</p></div>`:''}
     ${c&&(c.gate||c.dog)?`<div class="tags" style="margin-top:var(--s3)">${c.gate?`<span class="tag">gate ${esc(c.gate)}</span>`:''}${c.dog?'<span class="tag">dog on site</span>':''}</div>`:''}
-    <div class="clock"><div class="t tick" data-t0="${t0}" data-acc="${acc}">${clockOf(elapsedMs(j))}</div>
-      <div class="l">${hold?`On hold · ${(j.sess||[]).length} stretch${(j.sess||[]).length===1?'':'es'} banked`:'Elapsed'}</div></div>
+    <div class="clock" onclick="askAdjustStart('${j.id}')" role="button" tabindex="0">
+      <div class="t tick" data-t0="${t0}" data-acc="${acc}">${clockOf(elapsedMs(j))}</div>
+      <div class="l">${hold?`On hold · ${(j.sess||[]).length} stretch${(j.sess||[]).length===1?'':'es'} banked`:'Elapsed · tap to fix a late start'}</div></div>
     ${hr?`<div class="earn"><b class="tick" data-t0="${t0}" data-acc="${acc}" data-rate="${+j.rate||0}">${money(hrAmt(j.rate,elapsedMin(j)))}</b><span>earned so far</span></div>`:''}`;
   $('#fd-act').innerHTML=hr?`
     <button class="btn pri slab" onclick="doFinish('${j.id}')">Finish · total it up</button>
@@ -1676,6 +1684,127 @@ function setJobWork(id,el){
   save();render();openJob(id);
 }
 
+/* ══════════════ TIMES BY HAND ══════════════
+   He mowed the lawn and never pressed start. The work happened; only the
+   clock missed it. So he types the two times and it logs down exactly the
+   path a timed job takes — same minutes, same rounding, same ledger row,
+   same receipt — and is marked as entered by hand on his side of it. */
+function hmMs(dateISO,hm){
+  const p=String(hm||'').split(':');
+  const d=parseISO(dateISO);
+  d.setHours(+p[0]||0,+p[1]||0,0,0);
+  return d.getTime();
+}
+const msHm=ms=>{const d=new Date(+ms);return pad(d.getHours())+':'+pad(d.getMinutes());};
+const HAND_MAX=16*60;   /* minutes. Past this it's a typed AM for a PM, not a long day. */
+function logSpan(id){
+  const j=job(id),a=$('#lb-a'),b=$('#lb-b');
+  if(!j||!a||!b||!a.value||!b.value)return null;
+  const t0=hmMs(j.date,a.value),t1=hmMs(j.date,b.value);
+  return{t0,t1,min:Math.round((t1-t0)/60000)};
+}
+function paintLogTime(id){
+  const j=job(id),s=logSpan(id),el=$('#lb-out');
+  if(!el||!j)return;
+  if(!s||s.min<=0)
+    return void(el.innerHTML='<span class="sm">Finished has to come after started.</span>');
+  if(s.min>HAND_MAX)
+    return void(el.innerHTML=`<span class="sm">${fmtMin(s.min)} — check whether that's morning or afternoon.</span>`);
+  const bm=isHr(j)?billMin(j,s.min):s.min;
+  const amt=isHr(j)?hrAmt(j.rate,bm):(+j.price||0);
+  el.innerHTML=`<span class="big">${fmtMin(s.min)} · ${money(amt)}</span>`
+    +(isHr(j)?`<span class="sm">${bm!==s.min?`billed ${fmtMin(bm)} · `:''}${money(j.rate)} an hour</span>`:'');
+}
+/* the quick way in: he knows it took about an hour, not that it was 9:07 */
+function setSpan(id,mins){
+  const j=job(id),b=$('#lb-b');
+  if(!j||!b||!b.value)return;
+  haptic(5);
+  $('#lb-a').value=msHm(hmMs(j.date,b.value)-mins*60000);
+  paintLogTime(id);
+}
+function askLogTime(id){
+  const j=job(id);if(!j)return;
+  const end=Date.now(),start=end-estMin(j)*60000;
+  openSheet(`<div class="sh"><div><div class="eb">By hand</div><h3>${esc(jobName(j))}</h3>
+    <div class="sub">No timer running? Put in when you started and when you finished — it logs like any other ${isHr(j)?'hour on the clock':'cut'}.</div></div>
+    <button class="x" onclick="openJob('${j.id}')">✕</button></div>
+    <div class="g2">
+      <label class="f"><span class="stencil">Started</span><input type="time" id="lb-a" value="${msHm(start)}" oninput="paintLogTime('${j.id}')"></label>
+      <label class="f"><span class="stencil">Finished</span><input type="time" id="lb-b" value="${msHm(end)}" oninput="paintLogTime('${j.id}')"></label></div>
+    <div class="f"><span class="stencil">Or just how long it took</span><div class="chips" id="lb-quick">
+      ${[[20,'20m'],[30,'30m'],[45,'45m'],[60,'1h'],[90,'1h 30m'],[120,'2h']].map(([n,l])=>`<button class="chip sm" onclick="setSpan('${j.id}',${n})">${l}</button>`).join('')}</div></div>
+    <div class="won" id="lb-out"></div>
+    <button class="btn pri slab" onclick="logByHand('${j.id}')">Log it</button>
+    <div class="hint" style="margin-top:var(--s3)">Both times are on ${esc(niceDate(j.date).toLowerCase())}. A job logged this way drops no map pin and records no drive time — nothing was measured to record.</div>`);
+  paintLogTime(id);
+}
+function logByHand(id){
+  const j=job(id),s=logSpan(id);
+  if(!s||s.min<=0)return toast('Finished has to come after started');
+  if(s.min>HAND_MAX)return toast('Over 16 hours — check morning against afternoon');
+  /* one banked stretch and no running clock: finishJob then takes the same
+     road it takes for a job he paused and came back to */
+  j.sess=[{t0:s.t0,t1:s.t1}];
+  j.byHand=true;delete j.t0;j.st='paused';
+  haptic([14,60,14]);
+  finishJob(id);
+}
+/* The other half of the same mistake: the timer is running, but he pressed
+   start well after he actually started. Tap the clock and move it back. */
+function askAdjustStart(id){
+  const j=job(id);
+  if(!j||(j.st!=='active'&&j.st!=='paused'))return;
+  const t0=firstStart(j);
+  openSheet(`<div class="sh"><div><div class="eb">Started earlier</div><h3>${esc(jobName(j))}</h3>
+    <div class="sub">Pressed start late? Put the real time in and the clock catches up.</div></div>
+    <button class="x" onclick="closeSheet();openField()">✕</button></div>
+    <label class="f"><span class="stencil">Started at</span><input type="time" id="ad-a" value="${msHm(t0)}" oninput="paintAdjust('${j.id}')"></label>
+    <div class="f"><span class="stencil">Or knock it back</span><div class="chips">
+      ${[5,10,15,30].map(n=>`<button class="chip sm" onclick="nudgeStart('${j.id}',${n})">${n} min</button>`).join('')}</div></div>
+    <div class="won" id="ad-out"></div>
+    <button class="btn pri slab" onclick="applyAdjust('${j.id}')">Set it</button>`);
+  paintAdjust(id);
+}
+/* Moving the first start earlier adds exactly that much to the job, however
+   many stretches sit behind it — so work in deltas rather than re-deriving a
+   total, which double-counts the moment a paused job has been resumed. */
+function adjSpan(id){
+  const j=job(id),a=$('#ad-a');
+  if(!j||!a||!a.value)return null;
+  const t0=hmMs(j.date,a.value);
+  const firstEnd=(j.sess||[]).length?+j.sess[0].t1:Date.now();
+  const delta=Math.round((firstStart(j)-t0)/60000);
+  return{t0,ok:t0<firstEnd,min:elapsedMin(j)+delta};
+}
+function nudgeStart(id,mins){
+  const a=$('#ad-a'),j=job(id);
+  if(!a||!a.value||!j)return;
+  haptic(5);
+  a.value=msHm(hmMs(j.date,a.value)-mins*60000);
+  paintAdjust(id);
+}
+function paintAdjust(id){
+  const j=job(id),s=adjSpan(id),el=$('#ad-out');
+  if(!el||!j)return;
+  if(!s||!s.ok||s.min<=0)return void(el.innerHTML='<span class="sm">That start is after the clock stopped.</span>');
+  if(s.min>HAND_MAX)return void(el.innerHTML=`<span class="sm">${fmtMin(s.min)} — check morning against afternoon.</span>`);
+  el.innerHTML=`<span class="big">${fmtMin(s.min)} on the clock</span>`
+    +(isHr(j)?`<span class="sm">${money(hrAmt(j.rate,billMin(j,s.min)))} at ${money(j.rate)} an hour</span>`:'');
+}
+function applyAdjust(id){
+  const j=job(id),s=adjSpan(id);
+  if(!s||!s.ok||s.min<=0)return toast('That start is after the clock stopped');
+  if(s.min>HAND_MAX)return toast('Over 16 hours — check morning against afternoon');
+  /* the first stretch is the one that moves: a banked one if the job has been
+     paused before, otherwise the running clock itself */
+  if((j.sess||[]).length)j.sess[0].t0=s.t0;
+  else j.t0=s.t0;
+  j.tweaked=true;
+  save(true);closeSheet();render();openField();
+  toast(`Clock set to ${fmtMin(s.min)}`);
+}
+
 /* ══════════════ JOB SHEET ══════════════ */
 function openJob(id){
   const j=job(id);if(!j)return;
@@ -1687,6 +1816,7 @@ function openJob(id){
         <button class="btn" onclick="navJob('${j.id}')">Navigate</button>
         <button class="btn"${ph?'':' disabled'} onclick="txtJob('${j.id}','onmyway')">On my way</button></div>
       <button class="btn pri slab" onclick="startJob('${j.id}')">${isHr(j)?'Start the clock':'Start the cut'}</button>
+      <button class="btn slab" style="margin-top:var(--s2)" onclick="askLogTime('${j.id}')">Forgot the timer — log it by hand</button>
       <div class="btnrow"><button class="btn sm" onclick="bumpFrom('${j.id}',-1)">▲ Earlier</button>
       <button class="btn sm" onclick="bumpFrom('${j.id}',1)">▼ Later</button></div>
       ${(db.settings.services||[]).length?`<div class="f"><span class="stencil">How it's billed</span>${workChips('jw',isHr(j)?j.svcId:'flat',`setJobWork('${j.id}',this)`)}</div>`:''}
@@ -1709,7 +1839,7 @@ function openJob(id){
       <div class="eb">${j.st==='done'?(isHr(j)?esc(svcName(j)):'Cut'):niceDate(j.date)}</div>
       <h3>${esc(jobName(j))}</h3>
       <div class="sub">${esc(jobAddr(j))||'No address on file'}</div>
-      ${tagsFor(c,(j.carried&&j.st==='sched'?'<span class="tag hot">carried over</span>':'')+((j.typ==='od'&&!j.cid)?'<span class="tag ghost">one-time</span>':'')+(isHr(j)?`<span class="tag hr">${j.st==='done'?'by the hour':esc(svcName(j))+' · by the hour'}</span>`:''))}</div>
+      ${tagsFor(c,(j.carried&&j.st==='sched'?'<span class="tag hot">carried over</span>':'')+((j.typ==='od'&&!j.cid)?'<span class="tag ghost">one-time</span>':'')+(isHr(j)?`<span class="tag hr">${j.st==='done'?'by the hour':esc(svcName(j))+' · by the hour'}</span>`:'')+(j.byHand?'<span class="tag ghost">times by hand</span>':''))}</div>
     <button class="x" onclick="closeSheet()">✕</button></div>
     ${c&&c.notes?`<div class="note"><span class="stencil">Heads up</span><p>${esc(c.notes)}</p></div>`:''}
     ${body}
@@ -2111,6 +2241,9 @@ function sessLines(j){
 }
 function openReceipt(id){
   const j=job(id);if(!j)return;
+  /* a modal <dialog> lives in the top layer, above any z-index — so the sheet
+     has to go, or the customer is handed a screen with a form on it */
+  closeSheet();
   const hr=isHr(j),ss=sessLines(j);
   const worked=j.min||elapsedMin(j),billed=hr?(j.billMin||worked):worked;
   const days=new Set(ss.map(x=>x.day)).size;
@@ -2439,6 +2572,7 @@ window.CUT={get db(){return db},set db(v){db=v},money,numval,clockOf,addDays,tod
   startJob,pauseJob,finishJob,abortTimer,render,
   isHr,svcName,svcById,applySvc,applyFlat,sessMs,elapsedMin,billMin,hrAmt,liveAmt,billedMinOf,
   openReceipt,closeReceipt,receiptText,shareReceipt,
+  askLogTime,logByHand,logSpan,setSpan,hmMs,msHm,askAdjustStart,applyAdjust,adjSpan,nudgeStart,
   writePos,getFix,captureStart,captureStop,recordLeg,stopKey,posOfKey,mapped,
   FIX_TIMEOUT,FIX_MAX_AGE,FIX_MAX_ACC,FIX_BETTER,LEG_MIN_SEC,LEG_MAX_SEC};
 
