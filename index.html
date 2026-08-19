@@ -333,6 +333,10 @@ body.hasbar #toast{bottom:calc(var(--nav-h) + 78px + env(safe-area-inset-bottom)
 .daybody{padding:var(--s2) var(--s4)}
 .daybody .blk{padding-left:0;padding-right:0}
 .day .won{border-left:4px solid var(--leaf)}
+.won{background:var(--leaf-soft);border-radius:var(--r2);padding:var(--s4) var(--s4) calc(var(--s4) - 2px);margin-bottom:var(--s3)}
+.won .big{display:block;font-family:var(--disp);font-variation-settings:'wdth' 76,'wght' 850;font-size:var(--fs-3);
+  letter-spacing:-.015em;font-variant-numeric:tabular-nums;color:var(--leaf-deep)}
+.won .sm{display:block;color:var(--ink2);font-size:var(--fs-1);margin-top:5px}
 
 /* Lawns */
 .lawncard{display:flex;align-items:center;gap:var(--s3);width:100%;background:var(--srf);
@@ -457,6 +461,40 @@ a{color:var(--leaf-deep)}
 ::-webkit-scrollbar{width:0;height:0}
 .tick{font-variant-numeric:tabular-nums}
 
+/* ─── hourly work: the clock is the invoice ─── */
+.chips.wt{gap:6px}
+.tag.hr{background:var(--leaf-soft);color:var(--leaf-deep)}
+.stopcard.hold{border-color:var(--gold);box-shadow:0 0 0 3px var(--gold-soft),var(--e1)}
+.stopcard.hold .puck{background:var(--gold);border-color:var(--gold);color:var(--srf)}
+#runbar.hold{background:var(--gold);color:var(--srf)}
+#runbar.hold .pulse{animation:none;opacity:.45;background:currentColor}
+#field.hold .lb{color:oklch(82% .13 85)}
+#field.hold::before{animation-play-state:paused}
+#field .earn{display:flex;align-items:baseline;gap:11px;margin-top:var(--s4)}
+#field .earn b{font-family:var(--mono);font-weight:700;font-size:var(--fs-4);color:var(--org);font-variant-numeric:tabular-nums}
+#field.hold .earn b{color:oklch(82% .13 85)}
+#field .earn span{font-family:var(--cond);font-weight:600;letter-spacing:.16em;text-transform:uppercase;font-size:.78rem;color:oklch(66% .04 145)}
+
+/* ─── receipt: handed across the tailgate ─── */
+#recpt{position:fixed;inset:0;z-index:46;background:var(--bg);display:none;
+  overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+#recpt.on{display:block;animation:vin var(--med) var(--snap)}
+#recpt .rw{max-width:560px;margin:0 auto;padding:calc(var(--s6) + env(safe-area-inset-top)) var(--s4) calc(var(--s7) + env(safe-area-inset-bottom))}
+.rc-back{position:fixed;top:calc(var(--s3) + env(safe-area-inset-top));right:var(--s3);z-index:47;
+  width:50px;height:50px;border-radius:14px;background:var(--srf);border:1.5px solid var(--line);
+  display:none;align-items:center;justify-content:center;box-shadow:var(--e1)}
+#recpt.on ~ .rc-back{display:flex}
+.rc-line{display:flex;justify-content:space-between;gap:var(--s3);align-items:baseline;padding:11px 0;border-bottom:1px solid var(--line2)}
+.rc-line:first-child{padding-top:0}.rc-line:last-child{border-bottom:0;padding-bottom:0}
+.rc-line .k{color:var(--ink2)}
+.rc-line .k small{display:block;font-family:var(--cond);font-weight:600;letter-spacing:.09em;text-transform:uppercase;font-size:.72rem;color:var(--mut);margin-top:2px}
+.rc-line .v{font-family:var(--mono);font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
+.rc-line.sub2 .k,.rc-line.sub2 .v{color:var(--mut);font-size:var(--fs-1)}
+.rc-tot{background:var(--pine);color:var(--pine-ink);border-radius:var(--r3);padding:var(--s5);margin:var(--s4) 0}
+.rc-tot .cap{font-family:var(--cond);font-weight:600;font-size:.8rem;letter-spacing:.13em;text-transform:uppercase;opacity:.75}
+.rc-tot .big{font-variation-settings:'wdth' 72,'wght' 900;font-size:var(--fs-5);letter-spacing:-.03em;line-height:1;font-variant-numeric:tabular-nums;margin-top:4px}
+.rc-tot .sub2{font-family:var(--mono);font-weight:600;font-size:var(--fs-1);opacity:.8;margin-top:7px}
+
 @media (prefers-reduced-motion:reduce){
   *,*::before,*::after{animation:none!important;transition:none!important}
 }
@@ -491,6 +529,8 @@ a{color:var(--leaf-deep)}
 </div>
 
 <div id="bookpage"><div class="bw" id="bk-in"></div></div>
+<div id="recpt"><div class="rw" id="rc-in"></div></div>
+<button class="rc-back" onclick="closeReceipt()" aria-label="Back to the route">✕</button>
 <div id="scrim"></div>
 <dialog id="sheet" aria-label="Details"><div class="sc" id="sc"></div></dialog>
 <dialog id="pal" aria-label="Search everything"><div class="box">
@@ -534,8 +574,15 @@ const isIOS=/iP(hone|ad|od)/.test(navigator.userAgent);
 
 /* ---------- store ---------- */
 const DB_KEY='cutline.v1';
+/* Work the lawn can't price: paid by the clock, each trade at its own rate and
+   its own billing block. A job takes a copy of the rate the moment its clock
+   starts, so raising a rate in October never rewrites what September was
+   billed at, and deleting a trade never touches work already logged under it. */
+const SVC0=()=>[
+  {id:'trim',name:'Trimming',rate:45,round:15,minMin:0},
+  {id:'fall',name:'Fall cleanup',rate:55,round:15,minMin:0}];
 const FRESH=()=>({
-  settings:{biz:'Cutline',me:'',et:'',homeAddr:'North Bay, ON',lat:46.3091,lng:-79.4608,target:70,defPrice:50,maps:'apple'},
+  settings:{biz:'Cutline',me:'',et:'',homeAddr:'North Bay, ON',lat:46.3091,lng:-79.4608,target:70,defPrice:50,maps:'apple',services:SVC0()},
   clients:[],jobs:[],ledger:[],requests:[],fuel:[],legs:[],
   equip:{hours:0,bladeAt:0,bladeInt:25,oilAt:0,oilInt:50},
   meta:{genThrough:'',wx:null,lastExport:null,created:todayISO(),geo:null,geoAt:null,lastStop:null}
@@ -719,7 +766,7 @@ function ensureJobs(){
       if(!occursOn(c,d))continue;
       const exists=db.jobs.some(j=>j.cid===c.id&&j.typ==='route'&&Math.abs(diffDays(j.date,d))<=3);
       if(exists)continue;
-      db.jobs.push({id:uid(),cid:c.id,date:d,ord:1e6,st:'sched',typ:'route',price:c.price,min:0,notes:''});
+      db.jobs.push({id:uid(),cid:c.id,date:d,ord:1e6,st:'sched',typ:'route',price:c.price,min:0,notes:'',sess:[],bill:'flat'});
     }
   }
   db.meta.genThrough=horizon;
@@ -737,10 +784,46 @@ function jobAddr(j){return j.cid?client(j.cid)?.addr??'':j.addr||'';}
 function jobPhone(j){return j.cid?client(j.cid)?.phone??'':j.phone||'';}
 function estMin(j){
   if(j.min)return j.min;
+  /* an hourly job is booked by the job, not by the lawn — nothing in the cut
+     history predicts it, so it holds half a day until the clock says otherwise */
+  if(j.bill==='hr')return +j.est||120;
   const c=client(j.cid);
-  if(c){const done=db.jobs.filter(x=>x.cid===c.id&&x.st==='done'&&x.min);if(done.length)return Math.round(done.reduce((s,x)=>s+x.min,0)/done.length);}
+  if(c){const done=db.jobs.filter(x=>x.cid===c.id&&x.st==='done'&&x.min&&x.bill!=='hr');if(done.length)return Math.round(done.reduce((s,x)=>s+x.min,0)/done.length);}
   return 40;
 }
+
+/* ---------- hourly work ----------
+   A cut is priced by the lawn and the clock only ever reported on it. Hourly
+   work turns that around: the clock is the price, so it has to be honest —
+   it stops when he stops, it can pick up again the next morning, and every
+   stretch of it survives onto the receipt the customer is shown. */
+const svcById=id=>(db.settings.services||[]).find(s=>s.id===id)||null;
+const isHr=j=>!!j&&j.bill==='hr';
+const svcName=j=>j.svc||(svcById(j.svcId)||{}).name||'Hourly work';
+/* every stretch the job has banked, and the one running right now */
+const sessMs=j=>(j.sess||[]).reduce((s,x)=>s+Math.max(0,(+x.t1||0)-(+x.t0||0)),0);
+const elapsedMs=j=>sessMs(j)+(j.st==='active'&&j.t0?Date.now()-j.t0:0);
+const elapsedMin=j=>Math.max(0,Math.round(elapsedMs(j)/60000));
+const firstStart=j=>(j.sess&&j.sess.length?+j.sess[0].t0:0)||j.t0||0;
+const clockAt=ms=>new Date(+ms).toLocaleTimeString('en-CA',{hour:'numeric',minute:'2-digit'});
+/* Billed time rounds up into the block, then a minimum can lift it further.
+   Both rules ride on the job so the receipt can always show what it was billed
+   under, even years later and even if the trade has since been deleted. */
+function billMin(j,min){
+  const r=+j.round||0;
+  return Math.max(r>1?Math.ceil(min/r)*r:min,+j.minMin||0);
+}
+const hrAmt=(rate,min)=>Math.round((+rate||0)*(min/60)*100)/100;
+/* what the job is worth as of this second — an hourly job that hasn't started
+   is worth nothing, no matter what minimum sits under it */
+const liveAmt=j=>{
+  if(!isHr(j)||j.st==='done')return +j.price||0;
+  const m=elapsedMin(j);
+  return m?hrAmt(j.rate,billMin(j,m)):0;
+};
+/* the amount a route card shows: hourly work has a rate until it has a total */
+const jobAmtLbl=j=>(isHr(j)&&j.st!=='done')?'$'+(+j.rate||0)+'/hr':money(j.price);
+const billedMinOf=j=>isHr(j)?(j.billMin||j.min||0):(j.min||0);
 function optimize(d){
   const list=jobsOn(d).filter(j=>j.st==='sched');
   const withPos=list.filter(j=>jobPos(j).lat!=null),noPos=list.filter(j=>jobPos(j).lat==null);
@@ -774,7 +857,7 @@ function cascade(d){
 
 function rollOverdue(){
   const t=todayISO();let n=0;
-  db.jobs.forEach(j=>{if((j.st==='sched'||j.st==='active')&&j.date<t){j.date=t;j.ord=1e6;j.carried=true;n++;}});
+  db.jobs.forEach(j=>{if((j.st==='sched'||j.st==='active'||j.st==='paused')&&j.date<t){j.date=t;j.ord=1e6;j.carried=true;n++;}});
   if(n){normalizeOrders();save();}
   return n;
 }
@@ -793,6 +876,7 @@ function smsUrl(phone,body){
 const TPL={
   onmyway:n=>`Hi ${n.split(' ')[0]}, on my way to cut your lawn now. — ${db.settings.biz}`,
   done:n=>`Hi ${n.split(' ')[0]}, all done — lawn's looking sharp. Thanks! — ${db.settings.biz}`,
+  donehr:(n,j)=>`Hi ${n.split(' ')[0]}, all done — ${svcName(j).toLowerCase()} finished. ${fmtMin(billedMinOf(j))} at ${money(j.rate)}/hr = ${money(j.price)}.${db.settings.et?' E-transfer works great: '+db.settings.et:''} Thanks! — ${db.settings.biz}`,
   nudge:(n,amt)=>`Hi ${n.split(' ')[0]}, friendly reminder — ${money(amt)} outstanding for lawn cutting.${db.settings.et?' E-transfer works great: '+db.settings.et:''} Thanks! — ${db.settings.biz}`,
   decline:n=>`Hi ${n.split(' ')[0]}, thanks for the request — unfortunately I'm at capacity right now and can't take it on. Appreciate you thinking of me. — ${db.settings.biz}`
 };
@@ -907,8 +991,11 @@ function posOfKey(k){
    and unloading the trailer, which is the real cost of the stop. */
 function recordLeg(j){
   const here=stopKey(j),prev=db.meta.lastStop;
-  if(prev&&prev.key&&prev.key!==here&&j.t0){
-    const sec=Math.round((j.t0-prev.at)/1000);
+  /* the hop ended when work first began here — not when a paused clock
+     restarted after lunch, which happens long after he arrived */
+  const t0=firstStart(j);
+  if(prev&&prev.key&&prev.key!==here&&t0){
+    const sec=Math.round((t0-prev.at)/1000);
     if(sec>=LEG_MIN_SEC&&sec<=LEG_MAX_SEC){
       const a=posOfKey(prev.key),b=posOfKey(here);
       /* coordinates live on the row as well as the keys, so a later change of
@@ -931,17 +1018,39 @@ let tickT=null;
 function startJob(id){
   const act=db.jobs.find(j=>j.st==='active');
   if(act&&act.id!==id){toast(`Finish ${jobName(act)} first`);return openJob(act.id);}
-  const j=job(id);j.st='active';j.t0=Date.now();save(true);closeSheet();render();openField();
+  const j=job(id);
+  const resumed=j.st==='paused';
+  j.st='active';j.t0=Date.now();j.sess??=[];save(true);closeSheet();render();openField();
+  if(resumed)return void toast('Back on the clock');
   /* last, and unawaited — the timer is already running and stays running
      whether or not a fix ever turns up. Starting a cut is also a user gesture,
-     which is what iOS wants before it will raise the permission prompt. */
+     which is what iOS wants before it will raise the permission prompt.
+     A resume skips it: he never left, and the pin is already on file. */
   captureStart(id);
+}
+/* Pause banks the stretch and stops the clock dead. Hourly work gets paid for
+   time on site and nothing else — lunch, a parts run and the drive home all
+   come out of the total, and the customer sees each stretch on the receipt. */
+function pauseJob(id){
+  const j=job(id);
+  if(j.st!=='active')return;
+  (j.sess??=[]).push({t0:j.t0,t1:Date.now()});
+  delete j.t0;j.st='paused';
+  save(true);haptic([10,40]);render();openField();
+  toast(`Clock paused · ${fmtMin(elapsedMin(j))} banked`);
 }
 function finishJob(id){
   const j=job(id);
-  const min=Math.max(1,Math.round((Date.now()-j.t0)/60000));
+  /* fold the running stretch in before anything reads the clock, so the
+     paused job and the running one finish through exactly the same path */
+  if(j.st==='active'&&j.t0)(j.sess??=[]).push({t0:j.t0,t1:Date.now()});
+  const min=Math.max(1,Math.round(sessMs(j)/60000));
   j.st='done';j.t1=Date.now();j.min=min;delete j.carried;
-  db.equip.hours=Math.round((db.equip.hours+min/60)*100)/100;
+  /* hourly work prices itself the second the clock stops */
+  if(isHr(j)){j.billMin=billMin(j,min);j.price=hrAmt(j.rate,j.billMin);}
+  /* engine hours belong to the mower. Trimming and cleanup are hand work and
+     must not drag the blade and oil intervals forward with them. */
+  if(!isHr(j))db.equip.hours=Math.round((db.equip.hours+min/60)*100)/100;
   const c=client(j.cid);
   if(!j.charged){
     j.charged=true;
@@ -952,10 +1061,10 @@ function finishJob(id){
       const used=r2(Math.min(credit,amt));
       if(used>0){
         c.prepay=r2(credit-used);
-        db.ledger.push({id:uid(),cid:j.cid,jid:j.id,date:todayISO(),amt:used,st:'paid',paid:todayISO(),meth:'prepay',typ:'cut'});
+        db.ledger.push({id:uid(),cid:j.cid,jid:j.id,date:todayISO(),amt:used,st:'paid',paid:todayISO(),meth:'prepay',typ:'cut',svc:isHr(j)?svcName(j):''});
       }
       const rem=r2(amt-used);
-      if(rem>0)db.ledger.push({id:uid(),cid:j.cid,jid:j.id,oid:j.oid||null,date:todayISO(),amt:rem,st:'due',typ:'cut',who:jobName(j),ph:jobPhone(j)});
+      if(rem>0)db.ledger.push({id:uid(),cid:j.cid,jid:j.id,oid:j.oid||null,date:todayISO(),amt:rem,st:'due',typ:'cut',svc:isHr(j)?svcName(j):'',who:jobName(j),ph:jobPhone(j)});
     }
   }
   recordLeg(j);
@@ -979,7 +1088,9 @@ function clientDue(cid){return due().filter(l=>l.cid===cid).reduce((s,l)=>s+l.am
 function topup(cid,amt,meth){const c=client(cid);c.prepay=Math.round(((c.prepay||0)+amt)*100)/100;
   db.ledger.push({id:uid(),cid,date:todayISO(),amt,st:'paid',paid:todayISO(),meth,typ:'topup'});save();}
 function clientStats(c){
-  const done=db.jobs.filter(j=>j.cid===c.id&&j.st==='done');
+  /* what the lawn pays per cut — hourly work is priced by the clock and would
+     drag both the average time and the rate somewhere they don't belong */
+  const done=db.jobs.filter(j=>j.cid===c.id&&j.st==='done'&&j.bill!=='hr');
   const timed=done.filter(j=>j.min);
   const avg=timed.length?timed.reduce((s,j)=>s+j.min,0)/timed.length:0;
   const rate=avg?(c.price/(avg/60)):0;
@@ -990,13 +1101,16 @@ function seasonStats(){
   const collected=paid.reduce((s,l)=>s+l.amt,0);
   const owing=due().reduce((s,l)=>s+l.amt,0);
   const done=db.jobs.filter(j=>j.st==='done');
+  const cuts=done.filter(j=>j.bill!=='hr');
+  /* every worked minute counts toward the real rate, whichever way it was
+     billed — that comparison is the whole point of the number */
   const mins=done.reduce((s,j)=>s+(j.min||0),0);
   const cutRev=db.ledger.filter(l=>l.typ==='cut').reduce((s,l)=>s+l.amt,0);
   const rate=mins?Math.round(cutRev/(mins/60)):0;
   const costs=db.fuel.reduce((s,f)=>s+f.cost,0);
   const fuel=db.fuel.filter(f=>!f.cat||f.cat==='Fuel').reduce((s,f)=>s+f.cost,0);
-  const cpc=done.length?Math.round(fuel/done.length*100)/100:0;
-  return{collected,owing,cuts:done.length,mins,rate,fuel,costs,cpc};
+  const cpc=cuts.length?Math.round(fuel/cuts.length*100)/100:0;
+  return{collected,owing,cuts:cuts.length,hourly:done.length-cuts.length,mins,rate,fuel,costs,cpc};
 }
 
 /* ---------- intake: magic link + paste ---------- */
@@ -1026,10 +1140,12 @@ async function pasteBooking(){
   }catch(e){toast('Tap allow, or long-press the text and copy first');}
 }
 function saveRequest(p){db.requests.push({id:uid(),...p,ts:Date.now(),st:'new'});save();render();}
-function acceptOnce(p,dateISO,price,reqId){
+function acceptOnce(p,dateISO,price,reqId,work){
   const jid=uid();
-  db.jobs.push({id:jid,cid:null,oid:uid(),name:p.name,phone:p.phone,addr:p.addr,lat:null,lng:null,...GEO0(),
-    date:dateISO,ord:1e6,st:'sched',typ:'od',price:+price||db.settings.defPrice,min:0,notes:p.notes||''});
+  const j={id:jid,cid:null,oid:uid(),name:p.name,phone:p.phone,addr:p.addr,lat:null,lng:null,...GEO0(),
+    date:dateISO,ord:1e6,st:'sched',typ:'od',price:+price||db.settings.defPrice,min:0,notes:p.notes||'',sess:[],bill:'flat'};
+  if(work&&work.svc){applySvc(j,work.svc);j.rate=+work.rate||j.rate;}
+  db.jobs.push(j);
   normalizeOrders();
   if(reqId){const _r=db.requests.find(r=>r.id===reqId);if(_r&&_r.sid)ackBooking(_r.sid,'accepted');db.requests=db.requests.filter(r=>r.id!==reqId);}
   save();closeSheet();render();toast(`Added ${p.name} — ${niceDate(dateISO)}`);
@@ -1081,7 +1197,7 @@ function backupStale(){
 
 /* ══════════════ STEEL UI ══════════════ */
 function haptic(p){try{navigator.vibrate&&navigator.vibrate(p)}catch(e){}}
-function openSheet(h){const d=$('#sheet');$('#sc').innerHTML=h;$('#sc').scrollTop=0;if(!d.open){if(typeof d.showModal==='function')d.showModal();else d.setAttribute('open','');}}
+function openSheet(h){hideReceipt();const d=$('#sheet');$('#sc').innerHTML=h;$('#sc').scrollTop=0;if(!d.open){if(typeof d.showModal==='function')d.showModal();else d.setAttribute('open','');}}
 function closeSheet(){const d=$('#sheet');if(!d.open)return;if(typeof d.close==='function')d.close();else d.removeAttribute('open');}
 $('#sheet').addEventListener('click',e=>{if(MIGGATE)return;if(e.target===e.currentTarget)closeSheet();});
 $('#sheet').addEventListener('cancel',e=>{if(MIGGATE)e.preventDefault();});
@@ -1135,10 +1251,11 @@ function tagsFor(c,extra,dark){
 function vToday(){
   const t=todayISO(),list=jobsOn(t);
   const done=list.filter(j=>j.st==='done').length;
-  const booked=list.reduce((s,j)=>s+(+j.price||0),0);
+  const booked=list.reduce((s,j)=>s+liveAmt(j),0);
   const leftMin=list.filter(j=>j.st!=='done').reduce((s,j)=>s+estMin(j),0);
   const w=wxFor(t),wet=w&&w.pop>=RAIN_POP;
   const collected=list.filter(j=>j.st==='done').reduce((s,j)=>s+(+j.price||0),0);
+  const running=list.find(j=>j.st==='active'||j.st==='paused');
   const prog=list.length?Math.round(done/list.length*100):0;
   let h='';
   if(db.requests.length)h+=`<button class="banner" onclick="openRequests()"><b>${db.requests.length===1?'A new request is waiting':db.requests.length+' requests waiting'}</b><span class="chev">›</span></button>`;
@@ -1147,7 +1264,7 @@ function vToday(){
     <div class="big" id="heroamt" data-to="${booked}">${money(booked)}</div>
     <div class="mid">
       <div class="pc"><b>${done}/${list.length||0}</b><span>Cut</span></div>
-      <div class="pc"><b>${leftMin?fmtMin(leftMin):'—'}</b><span>Left</span></div>
+      <div class="pc"><b>${running&&isHr(running)?fmtMin(elapsedMin(running)):leftMin?fmtMin(leftMin):'—'}</b><span>${running&&isHr(running)?'On the clock':'Left'}</span></div>
       <div class="pc"><b>${money(collected)}</b><span>In hand</span></div>
     </div>
     <div class="meter"><i style="width:${prog}%"></i></div>
@@ -1162,17 +1279,18 @@ function vToday(){
   }else{
     h+=`<div class="route" style="--route-done:${prog}%">`+list.map((j,i)=>{
       const c=client(j.cid);
-      const live=j.st==='active';
+      const live=j.st==='active',hold=j.st==='paused';
       let tg='';
+      if(isHr(j)&&j.st!=='done')tg+=`<span class="tag hr">${esc(svcName(j))}</span>`;
       if(j.carried)tg+='<span class="tag hot">carried over</span>';
       if(c&&c.gate)tg+=`<span class="tag ghost">gate ${esc(c.gate)}</span>`;
       if(c&&c.dog)tg+='<span class="tag ghost">dog</span>';
       const d=j.cid?clientDue(j.cid):0;
       if(d>0)tg+=`<span class="tag owe">owes ${money(d)}</span>`;
-      return `<button class="stopcard ${j.st==='done'?'done':''} ${live?'live':''}" onclick="openJob('${j.id}')">
-        <span class="puck">${j.st==='done'?'✓':live?'▶':i+1}</span>
-        <span class="top"><span class="nm">${esc(jobName(j))}</span><span class="amt">${money(j.price)}</span></span>
-        <span class="addr">${esc(jobAddr(j))||'No address'}${live?' · running now':j.st==='done'?(j.min?' · '+fmtMin(j.min):''):' · ~'+fmtMin(estMin(j))}</span>
+      return `<button class="stopcard ${j.st==='done'?'done':''} ${live?'live':''} ${hold?'hold':''}" onclick="openJob('${j.id}')">
+        <span class="puck">${j.st==='done'?'✓':live?'▶':hold?'‖':i+1}</span>
+        <span class="top"><span class="nm">${esc(jobName(j))}</span><span class="amt">${jobAmtLbl(j)}</span></span>
+        <span class="addr">${esc(jobAddr(j))||'No address'}${live?' · running now':hold?` · on hold · ${fmtMin(elapsedMin(j))} banked`:j.st==='done'?(j.min?' · '+fmtMin(billedMinOf(j)):''):' · ~'+fmtMin(estMin(j))}</span>
         ${tg?`<span class="tags">${tg}</span>`:''}
       </button>`;
     }).join('')+'</div>';
@@ -1182,7 +1300,7 @@ function vToday(){
   const mp=mapped();
   if(mp.of&&mp.n<mp.of)
     h+=`<div class="hint" style="text-align:center;margin:var(--s3) 0 var(--s2)">${mp.n} of ${mp.of} mapped</div>`;
-  h+=`<button class="addcut" onclick="openQuickAdd('${t}')">＋ Add a cut</button>`;
+  h+=`<button class="addcut" onclick="openQuickAdd('${t}')">＋ Add work</button>`;
   return h;
 }
 function askShift(d){
@@ -1220,7 +1338,7 @@ function vWeek(){
           <button class="blk" onclick="openJob('${j.id}')">
             <span class="core"><span class="nm">${j.st==='done'?'✓ ':''}${esc(jobName(j))}${j.carried?' <span class="tag hot">carried over</span>':''}</span>
             <span class="sub">${esc(jobAddr(j))||''}</span></span>
-            <span class="v num">${money(j.price)}</span>
+            <span class="v num">${jobAmtLbl(j)}</span>
             <span class="chev">›</span></button>`).join('')}</div>`
         :`<div class="hint" style="padding:var(--s3) 0">Nothing booked.</div>`}
         <button class="btn sm" style="margin:var(--s2) 0 var(--s3)" onclick="openQuickAdd('${d}')">＋ Add</button>
@@ -1296,6 +1414,7 @@ function vMoney(){
   const wkeys=[];for(let i=7;i>=0;i--)wkeys.push(isoWeek(addDays(todayISO(),-7*i)));
   const wmax=Math.max(1,...wkeys.map(k=>wkm[k]||0));
   const doneJobs=db.jobs.filter(j=>j.st==='done');
+  const hrJobs=doneJobs.filter(j=>j.bill==='hr');
   const hrs=doneJobs.reduce((a,j)=>a+(j.min||0),0)/60;
   let h='';
   h+=`<div class="stats" style="margin-bottom:var(--s5)">
@@ -1349,8 +1468,9 @@ function vMoney(){
       <div class="bars8">${wkeys.map(k=>{const v=wkm[k]||0;
         return `<div class="b ${k===thisWk?'now':''}"><i style="height:${Math.max(3,Math.round(v/wmax*100))}%"></i><span class="barlbl">${k.slice(5)}</span></div>`;}).join('')}</div>
       <div style="height:var(--s3)"></div>
-      <div class="kv"><span class="k">Cuts completed</span><span class="v">${doneJobs.length}</span></div>
-      <div class="kv"><span class="k">Hours behind the mower</span><span class="v">${hrs.toFixed(1)} h</span></div>
+      <div class="kv"><span class="k">Cuts completed</span><span class="v">${doneJobs.length-hrJobs.length}</span></div>
+      ${hrJobs.length?`<div class="kv"><span class="k">Hourly jobs</span><span class="v">${hrJobs.length} · ${fmtMin(hrJobs.reduce((a,j)=>a+billedMinOf(j),0))} billed</span></div>`:''}
+      <div class="kv"><span class="k">Hours on the tools</span><span class="v">${hrs.toFixed(1)} h</span></div>
       <div class="kv"><span class="k">Effective rate</span><span class="v">${s.rate?'$'+s.rate+'/hr':'—'}</span></div>
       <div class="kv"><span class="k">Costs</span><span class="v">${s.costs?'−'+money(s.costs):money(0)}</span></div>
       <div class="kv"><span class="k">Kept after costs</span><span class="v">${money(Math.max(0,s.collected-s.costs))}</span></div>
@@ -1374,6 +1494,15 @@ h+=`<section><div class="hd"><h2>Your booking page</h2></div>
     <div class="btnrow" style="margin-top:var(--s3)">
       <button class="btn sm dark" onclick="copyBookLink()">Copy the link</button>
       <button class="btn sm" onclick="enterBooking({b:db.settings.biz,p:db.settings.me,preview:true})">See their side</button></div></div></section>`;
+h+=`<section><div class="hd"><h2>Hourly work</h2><button class="lnk" onclick="openSvc('')">Add a rate</button></div>
+    <div class="panel pad">
+      <div class="hint">Work the clock prices instead of the lawn — trimming, cleanups, hauling. Each rate keeps its own billing block, and a job takes a copy of it the moment you start the clock.</div>
+      ${(db.settings.services||[]).length?`<div style="margin-top:var(--s4)">${db.settings.services.map(s=>`
+        <div class="kv"><button class="k" style="flex:1;padding:0" onclick="openSvc('${s.id}')">${esc(s.name)}
+          <small style="display:block;color:var(--mut);font-size:var(--fs-0)">${+s.round>1?`${s.round}-min blocks`:'to the minute'}${s.minMin?` · ${fmtMin(s.minMin)} minimum`:''}</small></button>
+        <b class="v">$${+s.rate||0}/hr</b></div>`).join('')}</div>`
+      :`<div class="hint" style="margin-top:var(--s3)">No hourly rates set up yet.</div>`}
+    </div></section>`;
 h+=`<section><div class="hd"><h2>Equipment</h2><span class="lnk num">${e.hours.toFixed(1)} h</span></div>
     <div class="panel pad">
       <div class="kv"><span class="k">Blade · ${bl.toFixed(1)} h since sharpening</span><b class="v">${bl>=e.bladeInt?'DUE NOW':`${(e.bladeInt-bl).toFixed(0)} h left`}</b></div>${mt(bl,e.bladeInt)}
@@ -1429,6 +1558,42 @@ h+=`<section><div class="hd"><h2>Backup</h2>${backupStale()?'<span class="tag ho
     <div class="hint" style="text-align:center;margin-top:var(--s3)">Cutline · one file · nothing leaves this phone</div></section>`;
   return h;
 }
+/* Rates are edited, never renumbered: a job carries its own copy, so changing
+   one here only ever affects the next clock that starts under it. */
+function openSvc(id){
+  const list=db.settings.services||(db.settings.services=[]);
+  const s=id?list.find(x=>x.id===id):null;
+  const v=s||{id:'',name:'',rate:db.settings.target||60,round:15,minMin:0};
+  openSheet(`<div class="sh"><div><div class="eb">${s?'Hourly rate':'New rate'}</div>
+    <h3>${s?esc(s.name):'Paid by the hour'}</h3>
+    <div class="sub">Trimming, fall cleanup, hauling — anything the clock prices instead of the lawn.</div></div>
+    <button class="x" onclick="closeSheet()">✕</button></div>
+    <label class="f"><span class="stencil">What to call it</span><input id="s-name" value="${esc(v.name)}" placeholder="Trimming"></label>
+    <div class="g2">
+      <label class="f"><span class="stencil">Rate an hour</span><input id="s-rate" inputmode="decimal" value="${v.rate}"></label>
+      <label class="f"><span class="stencil">Minimum (minutes)</span><input id="s-min" inputmode="numeric" value="${+v.minMin||0}"></label></div>
+    <div class="f"><span class="stencil">Bill in blocks of</span><div class="chips" id="s-round">
+      ${[[1,'To the minute'],[6,'6 min'],[15,'15 min'],[30,'30 min'],[60,'1 hour']].map(([n,l])=>`<button class="chip sm${(+v.round||1)===n?' on':''}" data-v="${n}" onclick="pickChip(this)">${l}</button>`).join('')}</div></div>
+    <div class="hint">Time on site rounds up into the block. The receipt shows the customer both numbers, so nothing about the total is a surprise.</div>
+    <button class="btn pri slab" style="margin-top:var(--s4)" onclick="saveSvc('${v.id}')">${s?'Save':'Add it'}</button>
+    ${s?`<button class="btn risk slab" style="margin-top:var(--s2)" onclick="delSvc('${s.id}')">Remove</button>`:''}`);
+}
+function saveSvc(id){
+  const name=$('#s-name').value.trim();
+  if(!name)return toast('Give it a name');
+  const rate=numval($('#s-rate').value);
+  if(!rate)return toast('Set an hourly rate');
+  const v={name,rate,round:+($('#s-round .on')?.dataset.v||1),minMin:Math.max(0,Math.round(numval($('#s-min').value)))};
+  const list=db.settings.services||(db.settings.services=[]);
+  const s=id?list.find(x=>x.id===id):null;
+  if(s)Object.assign(s,v);else list.push({id:uid(),...v});
+  save();closeSheet();render();haptic(10);toast(s?'Rate saved':`${name} added`);
+}
+function delSvc(id){
+  db.settings.services=(db.settings.services||[]).filter(x=>x.id!==id);
+  save();closeSheet();render();
+  toast('Removed — work already logged keeps the rate it was billed at');
+}
 async function setHome(){
   const a=$('#homeaddr').value.trim();if(!a)return;
   toast('Finding it');
@@ -1447,21 +1612,33 @@ function wipeAll(){
 /* ══════════════ FIELD MODE ══════════════ */
 let FIELDON=false;
 function activeJob(){return db.jobs.find(j=>j.st==='active');}
+/* a paused job still owns the field surface and the run bar — a clock on hold
+   has to stay visible, or it gets left on hold */
+function liveJob(){return activeJob()||db.jobs.find(j=>j.st==='paused');}
 function openField(){
-  const j=activeJob();if(!j)return;
-  haptic(12);
-  const c=client(j.cid),ph=jobPhone(j);
-  $('#fd-lb').textContent='Cutting now';
+  const j=liveJob();if(!j)return;
+  hideReceipt();haptic(12);
+  const c=client(j.cid),ph=jobPhone(j),hr=isHr(j),hold=j.st==='paused';
+  const acc=sessMs(j),t0=hold?0:j.t0;
+  $('#field').classList.toggle('hold',hold);
+  $('#fd-lb').textContent=hr?`${svcName(j)} · ${hold?'on hold':'on the clock'}`:'Cutting now';
   $('#fd-body').innerHTML=`
     <div class="who">${esc(jobName(j))}</div>
-    <div class="addr">${esc(jobAddr(j))||'No address'} · ${money(j.price)}</div>
+    <div class="addr">${esc(jobAddr(j))||'No address'} · ${hr?`${money(j.rate)}/hr`:money(j.price)}</div>
     ${c&&c.notes?`<div class="note"><span class="stencil">Heads up</span><p>${esc(c.notes)}</p></div>`:''}
     ${c&&(c.gate||c.dog)?`<div class="tags" style="margin-top:var(--s3)">${c.gate?`<span class="tag">gate ${esc(c.gate)}</span>`:''}${c.dog?'<span class="tag">dog on site</span>':''}</div>`:''}
-    <div class="clock"><div class="t tick" data-t0="${j.t0}">0:00</div><div class="l">Elapsed</div></div>`;
-  $('#fd-act').innerHTML=`
+    <div class="clock"><div class="t tick" data-t0="${t0}" data-acc="${acc}">${clockOf(elapsedMs(j))}</div>
+      <div class="l">${hold?`On hold · ${(j.sess||[]).length} stretch${(j.sess||[]).length===1?'':'es'} banked`:'Elapsed'}</div></div>
+    ${hr?`<div class="earn"><b class="tick" data-t0="${t0}" data-acc="${acc}" data-rate="${+j.rate||0}">${money(hrAmt(j.rate,elapsedMin(j)))}</b><span>earned so far</span></div>`:''}`;
+  $('#fd-act').innerHTML=hr?`
+    <button class="btn pri slab" onclick="doFinish('${j.id}')">Finish · total it up</button>
+    <div class="btnrow">
+      <button class="btn sm" onclick="${hold?`startJob('${j.id}')`:`pauseJob('${j.id}')`}">${hold?'Back on the clock':'Pause the clock'}</button>
+      <button class="btn sm" onclick="abortTimer('${j.id}')">Stop, don't log</button></div>`
+  :`
     <button class="btn pri slab" onclick="doFinish('${j.id}')">Finish cut</button>
     <div class="btnrow">
-      <button class="btn sm"${ph?'':' disabled'} onclick="txtJob('${j.id}','done')">Text done</button>
+      <button class="btn sm"${ph?'':' disabled'} onclick="txtDone('${j.id}')">Text done</button>
       <button class="btn sm" onclick="abortTimer('${j.id}')">Stop, don't log</button></div>`;
   FIELDON=true;
   $('#field').classList.add('on');
@@ -1470,42 +1647,69 @@ function openField(){
 }
 function closeField(){FIELDON=false;$('#field').classList.remove('on');document.body.classList.remove('fieldon');syncRun();}
 function syncRun(){
-  const j=activeJob(),bar=$('#runbar');
+  const j=liveJob(),bar=$('#runbar');
   const show=!!j&&!FIELDON;
+  const hold=!!j&&j.st==='paused';
   bar.classList.toggle('on',show);
+  bar.classList.toggle('hold',hold);
   document.body.classList.toggle('hasbar',show);
-  if(j){$('#rb-who').textContent=jobName(j);$('#rb-t').dataset.t0=j.t0;}
+  if(j){$('#rb-who').textContent=jobName(j)+(hold?' · on hold':'');
+    const t=$('#rb-t');t.dataset.t0=hold?0:j.t0;t.dataset.acc=sessMs(j);t.textContent=clockOf(elapsedMs(j));}
+}
+
+/* ══════════════ WORK TYPE ══════════════
+   One row of chips, used everywhere a job is created or corrected: a flat
+   price per lawn, or one of his hourly trades. Picking a trade stamps its
+   rate and its billing rule onto the job then and there. */
+function workChips(id,sel,fn){
+  return `<div class="chips wt" id="${id}">
+    <button class="chip${!sel||sel==='flat'?' on':''}" data-v="flat" onclick="${fn}">Flat price</button>
+    ${(db.settings.services||[]).map(s=>`<button class="chip${sel===s.id?' on':''}" data-v="${s.id}" onclick="${fn}">${esc(s.name)} · $${+s.rate||0}/hr</button>`).join('')}</div>`;
+}
+function applySvc(j,s){j.bill='hr';j.svcId=s.id;j.svc=s.name;j.rate=+s.rate||0;j.round=+s.round||0;j.minMin=+s.minMin||0;j.price=0;}
+function applyFlat(j,price){j.bill='flat';delete j.svcId;delete j.svc;delete j.rate;delete j.round;delete j.minMin;delete j.billMin;j.price=price;}
+function setJobWork(id,el){
+  pickChip(el);
+  const j=job(id),v=el.dataset.v;
+  if(v==='flat')applyFlat(j,(j.cid?client(j.cid)?.price:0)||db.settings.defPrice);
+  else{const s=svcById(v);if(!s)return;applySvc(j,s);}
+  save();render();openJob(id);
 }
 
 /* ══════════════ JOB SHEET ══════════════ */
 function openJob(id){
   const j=job(id);if(!j)return;
-  if(j.st==='active'){closeSheet();return openField();}
+  if(j.st==='active'||j.st==='paused'){closeSheet();return openField();}
   const c=client(j.cid),ph=jobPhone(j);
   let body;
   if(j.st==='sched'){
     body=`<div class="btnrow">
         <button class="btn" onclick="navJob('${j.id}')">Navigate</button>
         <button class="btn"${ph?'':' disabled'} onclick="txtJob('${j.id}','onmyway')">On my way</button></div>
-      <button class="btn pri slab" onclick="startJob('${j.id}')">Start the cut</button>
+      <button class="btn pri slab" onclick="startJob('${j.id}')">${isHr(j)?'Start the clock':'Start the cut'}</button>
       <div class="btnrow"><button class="btn sm" onclick="bumpFrom('${j.id}',-1)">▲ Earlier</button>
       <button class="btn sm" onclick="bumpFrom('${j.id}',1)">▼ Later</button></div>
-      <label class="f"><span class="stencil">Price this cut</span><input inputmode="numeric" value="${j.price}" onchange="job('${j.id}').price=numval(this.value)||0;save();render()"></label>`;
+      ${(db.settings.services||[]).length?`<div class="f"><span class="stencil">How it's billed</span>${workChips('jw',isHr(j)?j.svcId:'flat',`setJobWork('${j.id}',this)`)}</div>`:''}
+      ${isHr(j)
+        ?`<label class="f"><span class="stencil">Rate an hour</span><input inputmode="decimal" value="${+j.rate||0}" onchange="job('${j.id}').rate=numval(this.value)||0;save();render()"></label>
+          <div class="hint">${j.round>1?`Billed in ${j.round}-minute blocks`:'Billed to the minute'}${j.minMin?` · ${fmtMin(j.minMin)} minimum`:''}. The total lands when the clock stops.</div>`
+        :`<label class="f"><span class="stencil">Price this cut</span><input inputmode="numeric" value="${j.price}" onchange="job('${j.id}').price=numval(this.value)||0;save();render()"></label>`}`;
   }else{
-    const rate=j.min?Math.round(j.price/(j.min/60)):0;
+    const rate=isHr(j)?(+j.rate||0):(j.min?Math.round(j.price/(j.min/60)):0);
     const preAmt=db.ledger.filter(l=>l.jid===j.id&&l.meth==='prepay').reduce((s,l)=>s+l.amt,0);
     const dueAmt=db.ledger.filter(l=>l.jid===j.id&&l.st==='due').reduce((s,l)=>s+l.amt,0);
     const settle=preAmt&&dueAmt?`${money(preAmt)} off their credit · ${money(dueAmt)} owing`
       :preAmt?'covered by their credit':dueAmt?'added to what they owe':'nothing to collect';
-    body=`<div class="won"><span class="big">${fmtMin(j.min)} · ${money(j.price)}</span>
-        <span class="sm">${rate?`$${rate} an hour`:''}${rate?' · ':''}${settle}</span></div>
-      <button class="btn"${ph?'':' disabled'} onclick="txtJob('${j.id}','done')">Text them it's done</button>`;
+    body=`<div class="won"><span class="big">${fmtMin(billedMinOf(j))} · ${money(j.price)}</span>
+        <span class="sm">${isHr(j)&&j.billMin&&j.billMin!==j.min?`${fmtMin(j.min)} on site · `:''}${rate?`$${rate} an hour`:''}${rate?' · ':''}${settle}</span></div>
+      <button class="btn pri slab" onclick="openReceipt('${j.id}')">Show the customer</button>
+      <button class="btn"${ph?'':' disabled'} onclick="txtDone('${j.id}')">Text them it's done</button>`;
   }
   openSheet(`<div class="sh"><div>
-      <div class="eb">${j.st==='done'?'Cut':niceDate(j.date)}</div>
+      <div class="eb">${j.st==='done'?(isHr(j)?esc(svcName(j)):'Cut'):niceDate(j.date)}</div>
       <h3>${esc(jobName(j))}</h3>
       <div class="sub">${esc(jobAddr(j))||'No address on file'}</div>
-      ${tagsFor(c,(j.carried&&j.st==='sched'?'<span class="tag hot">carried over</span>':'')+((j.typ==='od'&&!j.cid)?'<span class="tag ghost">one-time</span>':''))}</div>
+      ${tagsFor(c,(j.carried&&j.st==='sched'?'<span class="tag hot">carried over</span>':'')+((j.typ==='od'&&!j.cid)?'<span class="tag ghost">one-time</span>':'')+(isHr(j)?`<span class="tag hr">${j.st==='done'?'by the hour':esc(svcName(j))+' · by the hour'}</span>`:''))}</div>
     <button class="x" onclick="closeSheet()">✕</button></div>
     ${c&&c.notes?`<div class="note"><span class="stencil">Heads up</span><p>${esc(c.notes)}</p></div>`:''}
     ${body}
@@ -1522,12 +1726,14 @@ function doFinish(id){haptic([14,60,14]);finishJob(id);}
 function afterFinish(id,min){
   closeField();render();
   const j=job(id);
+  /* hourly work ends in front of the customer, so it ends on the receipt */
+  if(isHr(j))return openReceipt(id);
   openJob(id);
   toast(`${fmtMin(min)} · ${money(j.price)} logged`);
 }
 /* Stopping without logging is not a stop: no cut, no leg, and the start
    position goes with it rather than hanging off a cut that never happened. */
-function abortTimer(id){const j=job(id);j.st='sched';delete j.t0;j.p0=null;save();closeField();render();toast('Timer stopped');}
+function abortTimer(id){const j=job(id);j.st='sched';delete j.t0;delete j.billMin;j.sess=[];j.p0=null;save();closeField();render();toast('Timer stopped — nothing logged');}
 
 /* ══════════════ LAWN CARD ══════════════ */
 function openClient(id){
@@ -1605,10 +1811,18 @@ function delClient(id){
     <button class="btn" onclick="openClient('${id}')">Keep</button>`);
 }
 function askExtraCut(id){
-  openSheet(`<div class="sh"><div><div class="eb">Extra cut</div><h3>${esc(client(id).name)}</h3>
-    <div class="sub">A one-off on top of their regular schedule.</div></div><button class="x" onclick="openClient('${id}')">✕</button></div>
+  openSheet(`<div class="sh"><div><div class="eb">Extra work</div><h3>${esc(client(id).name)}</h3>
+    <div class="sub">A one-off on top of their regular schedule — priced by the lawn, or by the clock.</div></div><button class="x" onclick="openClient('${id}')">✕</button></div>
     <label class="f"><span class="stencil">Which day</span><input type="date" id="x-date" value="${todayISO()}"></label>
-    <button class="btn pri slab" onclick="const c=client('${id}');db.jobs.push({id:uid(),cid:'${id}',date:$('#x-date').value,ord:1e6,st:'sched',typ:'od',price:c.price,min:0,notes:''});normalizeOrders();save();closeSheet();render();toast('Extra cut booked')">Book it</button>`);
+    ${(db.settings.services||[]).length?`<div class="f"><span class="stencil">How it's billed</span>${workChips('x-work','flat','pickChip(this)')}</div>`:''}
+    <button class="btn pri slab" onclick="extraGo('${id}')">Book it</button>`);
+}
+function extraGo(id){
+  const c=client(id),s=svcById($('#x-work .on')?.dataset.v||'');
+  const j={id:uid(),cid:id,date:$('#x-date').value,ord:1e6,st:'sched',typ:'od',price:c.price,min:0,notes:'',sess:[],bill:'flat'};
+  if(s)applySvc(j,s);
+  db.jobs.push(j);normalizeOrders();save();closeSheet();render();
+  toast(s?`${s.name} booked · ${money(s.rate)}/hr`:'Extra cut booked');
 }
 function askPause(id){
   openSheet(`<div class="sh"><div><div class="eb">Pause</div><h3>${esc(client(id).name)}</h3>
@@ -1676,27 +1890,43 @@ function openRequests(){
 /* ══════════════ QUICK ADD / FUEL / MONEY ══════════════ */
 function openQuickAdd(d){
   const opts=db.clients.filter(c=>c.active).sort((a,b)=>a.name.localeCompare(b.name));
-  openSheet(`<div class="sh"><div><div class="eb">${niceDate(d)}</div><h3>Add a cut</h3></div>
+  openSheet(`<div class="sh"><div><div class="eb">${niceDate(d)}</div><h3>Add work</h3></div>
     <button class="x" onclick="closeSheet()">✕</button></div>
   ${opts.length?`<label class="f"><span class="stencil">An existing lawn</span><select id="q-cid">
     <option value="">Someone new — fill in below</option>${opts.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label><div class="rule"></div>`:''}
   <div>
     <label class="f"><span class="stencil">Name</span><input id="q-name" placeholder="Sarah — corner lot"></label>
     <label class="f"><span class="stencil">Address</span><input id="q-addr" placeholder="42 Lakeshore Dr"></label>
-    <div class="g2"><label class="f"><span class="stencil">Phone</span><input id="q-phone" inputmode="tel"></label>
-    <label class="f"><span class="stencil">Price</span><input id="q-price" inputmode="numeric" value="${db.settings.defPrice}"></label></div>
+    <label class="f"><span class="stencil">Phone</span><input id="q-phone" inputmode="tel"></label>
   </div>
+  ${(db.settings.services||[]).length?`<div class="f"><span class="stencil">How it's billed</span>${workChips('q-work','flat','pickWork(this)')}</div>`:''}
+  <label class="f"><span class="stencil" id="q-plbl">Price</span><input id="q-price" inputmode="decimal" value="${db.settings.defPrice}"></label>
+  <div class="hint" id="q-phint" style="display:none;margin-bottom:var(--s3)"></div>
   <button class="btn pri slab" onclick="quickAddGo('${d}')">Add to ${niceDate(d)}</button>`);
 }
+/* the one field that changes meaning: a price per lawn, or a rate per hour */
+function pickWork(el){
+  pickChip(el);
+  const s=svcById(el.dataset.v),h=$('#q-phint');
+  $('#q-plbl').textContent=s?'Rate an hour':'Price';
+  $('#q-price').value=s?s.rate:db.settings.defPrice;
+  h.style.display=s?'block':'none';
+  if(s)h.textContent=`${s.round>1?`Billed in ${s.round}-minute blocks`:'Billed to the minute'}${s.minMin?` · ${fmtMin(s.minMin)} minimum`:''}. The clock sets the total.`;
+}
 function quickAddGo(d){
-  const cid=$('#q-cid')?.value||'',price=numval($('#q-price').value)||db.settings.defPrice;
+  const cid=$('#q-cid')?.value||'',amt=numval($('#q-price').value);
+  const s=svcById($('#q-work .on')?.dataset.v||'');
   haptic(10);
   if(cid){const c=client(cid);
-    db.jobs.push({id:uid(),cid,date:d,ord:1e6,st:'sched',typ:'od',price:numval($('#q-price').value)||c.price,min:0,notes:''});
-    normalizeOrders();save();closeSheet();render();return toast(`${c.name} added`);}
+    const j={id:uid(),cid,date:d,ord:1e6,st:'sched',typ:'od',price:amt||c.price,min:0,notes:'',sess:[],bill:'flat'};
+    if(s){applySvc(j,s);j.rate=amt||s.rate;}
+    db.jobs.push(j);
+    normalizeOrders();save();closeSheet();render();
+    return toast(`${c.name} added${s?` · ${s.name} at ${money(j.rate)}/hr`:''}`);}
   const name=$('#q-name').value.trim();
   if(!name)return toast('Pick a lawn or type a name');
-  acceptOnce({name,phone:$('#q-phone').value.trim(),addr:$('#q-addr').value.trim(),notes:''},d,price,null);
+  acceptOnce({name,phone:$('#q-phone').value.trim(),addr:$('#q-addr').value.trim(),notes:''},d,
+    s?0:(amt||db.settings.defPrice),null,s?{svc:s,rate:amt||s.rate}:null);
 }
 function openFuel(){
   openSheet(`<div class="sh"><div><div class="eb">Running costs</div><h3>Log a cost</h3>
@@ -1747,6 +1977,7 @@ function nudgeGroup(){location.href=smsUrl(groupPhone(OPENG),TPL.nudge(groupName
 function payAllGroup(){haptic([12,50,12]);groupRows(OPENG).forEach(l=>{l.st='paid';l.paid=todayISO();l.meth=paidMeth;});OPENG=null;save();closeSheet();render();toast('Marked paid');}
 function settleClient(cid){const i=moneyGroups().findIndex(x=>x.cid===cid);if(i>=0)openMoneyGroup(i);else toast('Nothing outstanding');}
 function txtJob(id,k){const j=job(id);location.href=smsUrl(jobPhone(j),TPL[k](jobName(j)));}
+function txtDone(id){const j=job(id);location.href=smsUrl(jobPhone(j),isHr(j)?TPL.donehr(jobName(j),j):TPL.done(jobName(j)));}
 function callJob(id){location.href='tel:'+(jobPhone(job(id))||'').replace(/[^\d+]/g,'');}
 function navJob(id){location.href=navUrl(job(id));}
 function txtClient(id){const c=client(id);location.href=smsUrl(c.phone,`Hi ${c.name.split(' ')[0]}, `);}
@@ -1868,6 +2099,73 @@ function textStatement(cid){
   const body=`Hi ${c.name.split(' ')[0]}, quick tally for lawn cutting:\n${lines}\nTotal: ${money(tot)}${db.settings.et?'\nE-transfer: '+db.settings.et:''}\nThanks! — ${db.settings.biz}`;
   location.href=smsUrl(c.phone,body);
 }
+/* ══════════════ WORK RECEIPT ══════════════
+   What the customer is shown at the tailgate, on his phone, the moment the
+   job is done. Hourly work is only trusted if the clock is in the open, so
+   every stretch he was actually on site is printed in the order he worked it,
+   with what the clock read and what was billed side by side. */
+function sessLines(j){
+  return (j.sess||[]).filter(x=>x.t0&&x.t1).map(x=>({
+    day:iso(new Date(+x.t0)),from:clockAt(x.t0),to:clockAt(x.t1),
+    min:Math.max(1,Math.round((x.t1-x.t0)/60000))}));
+}
+function openReceipt(id){
+  const j=job(id);if(!j)return;
+  const hr=isHr(j),ss=sessLines(j);
+  const worked=j.min||elapsedMin(j),billed=hr?(j.billMin||worked):worked;
+  const days=new Set(ss.map(x=>x.day)).size;
+  $('#rc-in').innerHTML=`
+    <div class="bk-brand"><span class="bk-bars"><i></i><i></i><i></i></span><span class="bk-kick">${esc(db.settings.biz)}</span></div>
+    <div class="eb">${niceDate(j.date)}</div>
+    <h1 class="bk-title">Work<br>complete</h1>
+    <p class="bk-sub">${esc(jobName(j))}${jobAddr(j)?` · ${esc(jobAddr(j))}`:''}</p>
+    <div class="rule"></div>
+    <div class="panel pad">
+      <div class="rc-line"><span class="k">What was done</span><span class="v">${esc(hr?svcName(j):'Lawn cut')}</span></div>
+      ${ss.map(x=>`<div class="rc-line sub2"><span class="k">${days>1?`${niceDate(x.day)} · `:''}${x.from} – ${x.to}</span><span class="v">${fmtMin(x.min)}</span></div>`).join('')}
+      <div class="rc-line"><span class="k">Time on site${ss.length>1?`<small>${ss.length} stretches</small>`:''}</span><span class="v">${fmtMin(worked)}</span></div>
+      ${hr?`<div class="rc-line"><span class="k">Billed time${j.round>1?`<small>${j.round}-minute blocks</small>`:''}${j.minMin&&billed===j.minMin&&billed>worked?'<small>minimum charge</small>':''}</span><span class="v">${fmtMin(billed)}</span></div>
+      <div class="rc-line"><span class="k">Rate</span><span class="v">${money(j.rate)} / hr</span></div>`:''}
+    </div>
+    <div class="rc-tot"><div class="cap">Total for the work</div>
+      <div class="big">${money(j.price)}</div>
+      ${hr?`<div class="sub2">${fmtMin(billed)} × ${money(j.rate)}/hr</div>`:''}</div>
+    ${db.settings.et?`<div class="panel pad"><div class="rc-line"><span class="k">e-Transfer to</span><span class="v">${esc(db.settings.et)}</span></div></div>`:''}
+    <p class="bk-note">${esc(db.settings.biz)}${db.settings.me?` · ${esc(db.settings.me)}`:''} — thank you.</p>
+    <div class="rule"></div>
+    <button class="btn slab" onclick="shareReceipt('${j.id}')">Send them a copy</button>
+    <button class="btn pri slab" style="margin-top:var(--s2)" onclick="closeReceipt()">Back to the route</button>`;
+  $('#recpt').classList.add('on');
+  $('#recpt').scrollTop=0;
+}
+/* The receipt is the last thing in the stack and the only thing the customer
+   is meant to be looking at. Anything that opens behind it — the next job's
+   sheet, the field surface — takes it down first, so it can never be left
+   sitting over the app. */
+function hideReceipt(){const r=$('#recpt');if(!r.classList.contains('on'))return false;r.classList.remove('on');return true;}
+function closeReceipt(){if(hideReceipt())render();}
+function receiptText(j){
+  const hr=isHr(j),ss=sessLines(j),days=new Set(ss.map(x=>x.day)).size;
+  const worked=j.min||elapsedMin(j),billed=hr?(j.billMin||worked):worked;
+  const L=[`${db.settings.biz} — work complete`,
+    `${jobName(j)}${jobAddr(j)?' · '+jobAddr(j):''}`,
+    `${niceDate(j.date)} · ${hr?svcName(j):'Lawn cut'}`];
+  ss.forEach(x=>L.push(`  ${days>1?niceDate(x.day)+' ':''}${x.from}-${x.to} · ${fmtMin(x.min)}`));
+  L.push(`Time on site: ${fmtMin(worked)}`);
+  if(hr)L.push(`Billed: ${fmtMin(billed)} at ${money(j.rate)}/hr`);
+  L.push(`Total: ${money(j.price)}`);
+  if(db.settings.et)L.push(`E-transfer: ${db.settings.et}`);
+  return L.join('\n')+`\nThanks! — ${db.settings.biz}`;
+}
+function shareReceipt(id){
+  const j=job(id);if(!j)return;
+  const body=receiptText(j),ph=jobPhone(j);
+  if(navigator.share)return void navigator.share({text:body}).then(()=>toast('Sent')).catch(()=>{});
+  if(ph)return void(location.href=smsUrl(ph,body));
+  if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(body);
+  toast('Copied');
+}
+
 /* ══════════════ SAMPLE DAY ══════════════ */
 function loadSample(){
   if(db.clients.length||db.jobs.length)return toast('Sample loads only into an empty book');
@@ -1911,9 +2209,10 @@ let PALIX=0;
 function palItems(q){
   q=(q||'').toLowerCase();
   const acts=[
-    {t:'Add a cut',k:'Action',run:()=>openQuickAdd(todayISO())},
+    {t:'Add work',k:'Action',run:()=>openQuickAdd(todayISO())},
     {t:'Add a lawn',k:'Action',run:()=>openClient('')},
     {t:'Log a cost',k:'Action',run:()=>openFuel()},
+    {t:'Hourly rates',k:'Action',run:()=>openSvc('')},
     {t:'Copy booking link',k:'Action',run:()=>copyBookLink()},
     {t:'See the booking page',k:'Action',run:()=>enterBooking({b:db.settings.biz,p:db.settings.me,preview:true,api:IS_SERVED})},
     {t:'Requests',k:'Open',run:()=>openRequests()},
@@ -1962,8 +2261,11 @@ addEventListener('touchend',e=>{
    payload under cutline.v2.backup. v4 adds the geo capture fields. The stamp
    is now compared as a number rather than merely probed, so the next
    migration after this one can actually run — the old presence check would
-   have skipped it on every phone that already carried a stamp. */
-const SCHEMA=4;
+   have skipped it on every phone that already carried a stamp. v5 adds hourly
+   work: a list of rates in settings, and the billing stamp and clock stretches
+   on every job. The frozen copy is now named from the stamp it replaces, so
+   each migration keeps its own. */
+const SCHEMA=5;
 const schemaAt=()=>+(LS.getItem('cutline_schema_version')||0);
 let MIGGATE=false;
 
@@ -1984,9 +2286,14 @@ function backfillRecords(){
     if(!('aerated'in c)){c.aerated=null;n++;}
     if(!('aerOk'in c)){c.aerOk=null;n++;}
   }
+  if(!Array.isArray(db.settings.services)){db.settings.services=SVC0();n++;}
   for(const j of db.jobs){
     if(!('p0'in j)){j.p0=null;n++;}   /* position at timer start, mirrors t0 */
     if(!('p1'in j)){j.p1=null;n++;}   /* position at timer stop,  mirrors t1 */
+    if(!('bill'in j)){j.bill='flat';n++;}   /* everything on file was priced by the lawn */
+    /* a cut logged before the clock could pause worked exactly one stretch,
+       and both ends of it are already on the record */
+    if(!Array.isArray(j.sess)){j.sess=(j.t0&&j.t1)?[{t0:j.t0,t1:j.t1}]:[];n++;}
     /* one-time cuts own their coordinates, so they own their provenance too */
     if(j.cid==null&&!('posSrc'in j)){Object.assign(j,GEO0());j.posSrc=(j.lat!=null&&j.lng!=null)?'geo':null;n++;}
   }
@@ -2013,10 +2320,10 @@ function logStateSize(tag){
    it throws, the prior payload goes back exactly as it was and the stamp is
    left alone, so the next boot tries again rather than running on half-built
    state. */
-function migrateTo4(){
-  const before=LS.getItem(DB_KEY);
+function migrateNow(){
+  const before=LS.getItem(DB_KEY),frozen='cutline.v'+(SCHEMA-1)+'.backup';
   try{
-    if(before&&LS.getItem('cutline.v3.backup')==null)LS.setItem('cutline.v3.backup',before);
+    if(before&&LS.getItem(frozen)==null)LS.setItem(frozen,before);
     backfillRecords();
     LS.setItem(DB_KEY,JSON.stringify(db));
     LS.setItem('cutline_schema_version',String(SCHEMA));
@@ -2048,10 +2355,10 @@ function runSchemaGate(){
   /* preserve v3's frozen pre-v3 copy for anyone arriving without a stamp */
   try{if(!LS.getItem('cutline_schema_version')){const raw=LS.getItem(DB_KEY);if(raw)LS.setItem('cutline.v2.backup',raw);}}catch(e){}
   if(schemaAt()>=SCHEMA){logStateSize('boot');return false;}
-  if(!db.clients.length&&!db.jobs.length&&!db.ledger.length){migrateTo4();return false;}
+  if(!db.clients.length&&!db.jobs.length&&!db.ledger.length){migrateNow();return false;}
   MIGGATE=true;
   openSheet(`<div class="sh"><div><div class="eb">One time only</div><h3>Save a copy first</h3>
-    <div class="sub">This update gives every lawn a place to keep its map pin. Nothing is removed and nothing is renamed — but put the whole book somewhere other than this phone before it runs.</div></div></div>
+    <div class="sub">This update adds work paid by the hour — rates, a clock that pauses, and a receipt for the customer. Nothing is removed and nothing is renamed — but put the whole book somewhere other than this phone before it runs.</div></div></div>
     <div class="panel pad">
       <div class="kv"><span class="k">Lawns</span><b class="v">${db.clients.length}</b></div>
       <div class="kv"><span class="k">Cuts on file</span><b class="v">${db.jobs.length}</b></div>
@@ -2069,7 +2376,7 @@ function migExport(){
 }
 function migGo(){
   MIGGATE=false;closeSheet();
-  if(migrateTo4()){render();checkIntake();}
+  if(migrateNow()){render();checkIntake();}
 }
 function migFailed(e){
   MIGGATE=false;closeSheet();
@@ -2104,8 +2411,13 @@ function render(){
   syncRun();
 }
 const clockOf=ms=>{const s=Math.floor(ms/1000),h=Math.floor(s/3600);return h?`${h}:${pad(Math.floor(s%3600/60))}:${pad(s%60)}`:`${Math.floor(s/60)}:${pad(s%60)}`;};
+/* one heartbeat for everything that counts up: a running stretch (data-t0),
+   the stretches already banked (data-acc), and money if it carries a rate */
 setInterval(()=>{document.querySelectorAll('.tick').forEach(el=>{
-  const t0=+el.dataset.t0;if(t0)el.textContent=clockOf(Date.now()-t0);});},1000);
+  const t0=+el.dataset.t0||0,acc=+el.dataset.acc||0;
+  if(!t0&&!acc)return;
+  const ms=acc+(t0?Date.now()-t0:0);
+  el.textContent=el.dataset.rate?money(ms/3.6e6*(+el.dataset.rate)):clockOf(ms);});},1000);
 let LASTDAY=todayISO();
 setInterval(()=>{if(todayISO()!==LASTDAY){LASTDAY=todayISO();openDay=todayISO();ensureJobs();rollOverdue();loadWeather();render();}},60e3);
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){ensureJobs();rollOverdue();loadWeather().then(render);if(!BK||BK.preview){pullDoc().then(()=>fetchBookings());}}});
@@ -2123,8 +2435,10 @@ window.addEventListener('hashchange',()=>{const b=readBookParam();if(b)enterBook
 /* console bridge — debugging + test rig access to closure-scoped state */
 window.CUT={get db(){return db},set db(v){db=v},money,numval,clockOf,addDays,todayISO,diffDays,fmtMin,iso,parseISO,isoWeek,b64d,encodeBooking,esc,uid,job,client,save,FRESH,
   pushDoc,pullDoc,fetchBookings,ackBooking,syncNow,setTok,setSrv,get SYNC(){return SYNC},get REV(){return REV},get TOK(){return TOK},
-  SCHEMA,schemaAt,backfillRecords,migrateTo4,runSchemaGate,stateBytes,logStateSize,GEO0,AER0,get MIGGATE(){return MIGGATE},
-  startJob,finishJob,abortTimer,render,
+  SCHEMA,schemaAt,backfillRecords,migrateNow,runSchemaGate,stateBytes,logStateSize,GEO0,AER0,SVC0,get MIGGATE(){return MIGGATE},
+  startJob,pauseJob,finishJob,abortTimer,render,
+  isHr,svcName,svcById,applySvc,applyFlat,sessMs,elapsedMin,billMin,hrAmt,liveAmt,billedMinOf,
+  openReceipt,closeReceipt,receiptText,shareReceipt,
   writePos,getFix,captureStart,captureStop,recordLeg,stopKey,posOfKey,mapped,
   FIX_TIMEOUT,FIX_MAX_AGE,FIX_MAX_ACC,FIX_BETTER,LEG_MIN_SEC,LEG_MAX_SEC};
 
